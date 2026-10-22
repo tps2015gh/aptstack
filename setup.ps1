@@ -97,7 +97,8 @@ if (Test-Path $cfgPath) {
 }
 $cfg.httpPort = $HttpPort
 $cfg.dbPort = $DbPort
-($cfg | ConvertTo-Json) | Set-Content $cfgPath -Encoding UTF8
+# UTF-8 ไม่มี BOM — JSON ที่มี BOM ทำให้ php json_decode() คืน null
+[IO.File]::WriteAllText($cfgPath, (($cfg | ConvertTo-Json) + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
 Ok "http=$HttpPort  db=$DbPort"
 Info 'ถ้าชนกับ program อื่น ให้แก้ config\stack.json แล้ว aptstack restart'
 

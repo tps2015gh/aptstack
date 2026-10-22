@@ -13,16 +13,24 @@
 
 ---
 
-## เริ่มใช้ 3 คำสั่ง
+## เริ่มใช้ 4 คำสั่ง
 
 ```cmd
 cd /d D:\aptstack
-aptstack start          :: เปิด MariaDB + Web
-aptstack doctor         :: ตรวจสุขภาพ + ช่องโหว่
+aptstack init             :: สร้างโครงสร้าง + ติดตั้งตัวอย่าง app (ถ้ายังไม่มี)
+aptstack start            :: เปิด database + web
+aptstack seed             :: import database ตัวอย่าง (aptstack_demo)
+aptstack doctor           :: ตรวจสุขภาพ + ช่องโหว่
 ```
 
 เปิดเบราว์เซอร์ → **http://127.0.0.1:8077/app/**
-phpMyAdmin → **http://127.0.0.1:8077/phpmyadmin/**
+(ตัวอย่าง app จะโชว์ PHP version + ตาราง `greetings` จาก database → พิสูจน์ว่าทุกอย่างรันได้จริง)
+
+phpMyAdmin → **http://127.0.0.1:8077/phpmyadmin/** (ถ้ามีใน `www\`)
+
+> **บน release ที่ดาวน์โหลดมา** จะมีแค่ scripts/templates/docs + `examples\`
+> ต้องโหลด PHP เอง: `aptstack add php <php-x.y.z-Win32-vs16-x64.zip>`
+> (สายที่ปลอดภัย: 8.3.36 / 8.4.27 / 8.5.12 / 8.2.35)
 
 ---
 
@@ -61,13 +69,26 @@ aptstack doctor
 > เลือกตัวไหน? → **8.3.36** (ปลอดภัย + กระโดดจาก 8.1 ไม่มาก โค้ด CodeIgniter เก่าไม่พัง)
 > โหลดแบบ **Thread Safe x64** (`php-x.y.z-Win32-vs16-x64.zip`)
 
-### 3) เปิด / ปิด
+### 3) เปลี่ยน Apache / MySQL (เหมือน PHP เป๊ะ)
+
+```cmd
+aptstack add apache C:\Downloads\httpd-2.4.69-Win64-VS18.zip
+aptstack use apache 2.4.69        :: สลับ Apache + restart
+
+aptstack add mysql  C:\Downloads\mariadb-11.4.13-winx64.zip
+aptstack use mysql  11.4.13       :: สลับ MySQL (datadir แยกต่อ version ข้อมูลไม่ปน)
+```
+
+web server ที่ใช้ตอนนี้ดูที่ `webMode` ใน `config\stack.json`:
+`"auto"` (มี Apache ใช้ Apache) · `"apache"` · `"builtin"` (PHP built-in)
+
+### 4) เปิด / ปิด
 
 ```cmd
 aptstack start | stop | restart | status | list
 ```
 
-### 4) ติดตั้งเป็น Windows Service
+### 5) ติดตั้งเป็น Windows Service
 
 ```cmd
 :: รัน cmd/PowerShell ในโหมด administrator
@@ -79,7 +100,7 @@ aptstack service uninstall     :: ถอน (ไม่เหลืออะไ�
 
 ไม่ต้องโหลด NSSM/WinSW — ตัว service compile ให้เองด้วย `csc.exe` ที่มากับ Windows
 
-### 5) backup ก่อนเปลี่ยนเวอร์ชัน
+### 6) backup ก่อนเปลี่ยนเวอร์ชัน
 
 ```cmd
 aptstack backup            :: dump ทุก database -> data\dumps\

@@ -62,7 +62,7 @@
 <div class="nav">
   <b>เนื้อหา:</b>
   <a href="#s0">คืออะไร</a><a href="#s1">เริ่มใช้</a><a href="#s2">คำสั่ง</a>
-  <a href="#s3">สลับเวอร์ชัน</a><a href="#s4">สลับ PHP</a><a href="#s5">XAMPP</a>
+  <a href="#s3">สลับเวอร์ชัน</a><a href="#s4">สลับ PHP</a><a href="#s4b">สลับ Apache/MySQL</a><a href="#s5">XAMPP</a>
   <a href="#s6">Service</a><a href="#s7">ย้าย server</a><a href="#s8">แก้ปัญหา</a>
   <a href="#s9">ความปลอดภัย</a><a href="#s10">โครงสร้าง</a>
 </div>
@@ -83,15 +83,18 @@
 
 <h2 id="s1">1. ติดตั้งครั้งแรก</h2>
 <pre><code>cd /d D:\aptstack          <span style="color:#6b7280">:: ห้ามมีช่องว่างใน path (แนะนำ)</span>
-aptstack init              <span style="color:#6b7280">:: สร้างโครงสร้าง</span>
-aptstack list              <span style="color:#6b7280">:: ดูของที่มี</span>
-aptstack start             <span style="color:#6b7280">:: เปิด MariaDB + Web</span>
+aptstack init              <span style="color:#6b7280">:: สร้างโครงสร้าง + ติดตั้งตัวอย่าง app</span>
+aptstack add php &lt;zip&gt;     <span style="color:#6b7280">:: release ไม่ได้แถม PHP -&gt; โหลดเอง</span>
+aptstack start             <span style="color:#6b7280">:: เปิด database + web</span>
+aptstack seed              <span style="color:#6b7280">:: import database ตัวอย่าง</span>
 aptstack doctor            <span style="color:#6b7280">:: ตรวจสุขภาพ + ช่องโหว่</span></code></pre>
 
 <div class="box ok">
 <b>เปิดเบราว์เซอร์</b><br>
-แอป: <code>http://127.0.0.1:8077/app/</code><br>
-phpMyAdmin: <code>http://127.0.0.1:8077/phpmyadmin/</code><br>
+ตัวอย่าง app: <code>http://127.0.0.1:8077/app/</code>
+→ โชว์ PHP version + ตาราง <code>greetings</code>
+(เห็นตาราง = <b>web + PHP + database รันได้จริง</b>)<br>
+phpMyAdmin: <code>http://127.0.0.1:8077/phpmyadmin/</code> ·
 หน้าทดสอบ PHP: <code>http://127.0.0.1:8077/</code>
 </div>
 
@@ -106,12 +109,15 @@ aptstack list (ls, l)            ดู version ที่ติดตั้ง +
 
 aptstack add app &lt;folder|zip&gt;    เพิ่มเวอร์ชันแอป -&gt; versions\&lt;name&gt;
 aptstack add php &lt;zip|url&gt;       เพิ่ม PHP        -&gt; stack\php\&lt;ver&gt;
-aptstack add mysql &lt;zip&gt;         เพิ่ม MySQL/MariaDB (ไม่บังคับ)
+aptstack add apache &lt;zip&gt;        เพิ่ม Apache     -&gt; stack\apache\&lt;ver&gt;
+aptstack add mysql &lt;zip&gt;         เพิ่ม MySQL/MariaDB -&gt; stack\mysql\&lt;ver&gt;
 
 aptstack use                     เมนูเลือก (แอป + PHP) กดเลข + Enter
 aptstack use 1.2.0               สลับแอป + restart ให้เอง
 aptstack use 1.2                 ใช้ prefix ก็ได้
 aptstack use php 8.3.36          สลับ PHP + restart
+aptstack use apache 2.4.69       สลับ Apache + restart
+aptstack use mysql 11.4.13       สลับ MySQL (datadir แยกต่อ version)
 aptstack use -                   ย้อนกลับตัวก่อนหน้า
 aptstack next | prev             วนดูหลายเวอร์ชัน
 
@@ -119,6 +125,7 @@ aptstack start | stop | restart  เปิด/ปิด stack
 aptstack status                  รันอยู่ไหม ใช้ version ไหน
 aptstack doctor                  ตรวจสุขภาพ + ช่องโหว่
 aptstack backup [ชื่อ.sql]       dump ทุก database -&gt; data\dumps\
+aptstack seed                    import database ตัวอย่าง (aptstack_demo)
 
 aptstack service install         ลง Windows Service (ต้อง admin)
 aptstack service uninstall       ถอน
@@ -170,6 +177,31 @@ aptstack doctor</code></pre>
 <code>Creation of dynamic property ... is deprecated</code> ให้แก้ที่
 <code>versions\&lt;ver&gt;\index.php</code> บรรทัด <code>case 'development':</code>
 <pre style="margin:8px 0 0"><code>error_reporting(E_ALL &amp; ~E_DEPRECATED &amp; ~E_NOTICE &amp; ~E_STRICT);</code></pre>
+</div>
+
+<h2 id="s4b">4b. เปลี่ยน Apache / MySQL (คำสั่งเดียว)</h2>
+<pre><code>aptstack add apache C:\Downloads\httpd-2.4.69-Win64-VS18.zip
+aptstack use apache 2.4.69       <span style="color:#6b7280">:: เลือก + restart ให้เอง</span>
+
+aptstack add mysql  C:\Downloads\mariadb-11.4.13-winx64.zip
+aptstack use mysql  11.4.13      <span style="color:#6b7280">:: เลือก + restart + datadir ของตัวนั้น</span></code></pre>
+
+<table>
+<tr><th><code>webMode</code> ใน config\stack.json</th><th>พฤติกรรม</th></tr>
+<tr><td><code>"auto"</code></td><td>มี Apache + PHP Thread Safe → ใช้ Apache, ไม่งั้น built-in</td></tr>
+<tr><td><code>"apache"</code></td><td>บังคับ Apache + <code>mod_php</code> (production)</td></tr>
+<tr><td><code>"builtin"</code></td><td>บังคับ PHP built-in (dev, single-threaded)</td></tr>
+</table>
+
+<div class="box warn">
+<b>mod_php ต้องใช้ PHP Thread Safe</b> (มี <code>php8apache2_4.dll</code>) —
+<code>doctor</code> เตือนให้เอง และรัน <code>httpd -t</code> ตรวจ syntax ให้ด้วย<br>
+โค้ดแอป <b>ไม่ต้องแก้</b> แค่ <code>base_url</code> ตรง host/port จริง
+</div>
+
+<div class="box">
+<b>datadir แยกต่อ version</b> — <code>use mysql &lt;ver&gt;</code> ชี้ไป
+<code>data\&lt;ชื่อเครื่องยนต์&gt;</code> → ข้อมูลไม่ปนกัน ไม่ถูก upgrade โดยไม่ตั้งใจ
 </div>
 
 <h2 id="s5">5. ใช้ MySQL ของ XAMPP แทน MariaDB ของ aptstack</h2>

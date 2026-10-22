@@ -37,6 +37,7 @@ $Script:P = @{
     Stack     = Join-Path $Root 'stack'
     PhpRoot   = Join-Path $Root 'stack\php'
     MySqlRoot = Join-Path $Root 'stack\mysql'
+    ApacheRoot = Join-Path $Root 'stack\apache'
     Versions  = Join-Path $Root 'versions'
     Www       = Join-Path $Root 'www'
     Data      = Join-Path $Root 'data'
@@ -80,7 +81,7 @@ function Write-Err2($t) { Write-Host "  [ERR]  $t" -ForegroundColor Red }
 function Write-Info($t) { Write-Host "         $t" -ForegroundColor Gray }
 
 function Ensure-Dirs {
-    foreach ($k in @('Stack', 'PhpRoot', 'MySqlRoot', 'Versions', 'Www', 'Data', 'Dumps', 'ConfigDir', 'Runtime', 'Pids', 'Tmp', 'Logs', 'Templates', 'Downloads')) {
+    foreach ($k in @('Stack', 'PhpRoot', 'MySqlRoot', 'ApacheRoot', 'Versions', 'Www', 'Data', 'Dumps', 'ConfigDir', 'Runtime', 'Pids', 'Tmp', 'Logs', 'Templates', 'Downloads')) {
         $p = $Script:P[$k]
         if (-not (Test-Path $p)) { New-Item -ItemType Directory -Path $p -Force | Out-Null }
     }
@@ -94,9 +95,13 @@ function Get-Config {
         php         = ''
         phpPrev     = ''
         mysql       = ''
+        apache      = ''
+        apachePrev  = ''
+        mysqlPrev   = ''
         httpPort    = 8077
         dbPort      = 3307
         dbMode      = 'internal'   # internal = MariaDB ของเรา | external = ใช้ MySQL ของ XAMPP
+        webMode     = 'auto'       # auto = ใช้ Apache ถ้ามี ไม่งั้น built-in | apache | builtin
         appAlias    = 'app'
         serviceName = 'AptStack'
         dbUser      = 'root'
@@ -118,7 +123,9 @@ function Get-Config {
 
 function Save-Config($cfg) {
     Ensure-Dirs
-    ($cfg | ConvertTo-Json -Depth 5) | Set-Content -Path $Script:P.Config -Encoding UTF8
+    # เขียน UTF-8 *ไม่มี BOM* — JSON ที่มี BOM เป็น JSON ไม่ถูกต้อง
+    # (php json_decode() คืน null ทันที -> แอปจะอ่าน port/user/pass ไม่ได้)
+    Write-Utf8NoBom $Script:P.Config (($cfg | ConvertTo-Json -Depth 5) + "`r`n")
 }
 
 # ---------------------------------------------------------------- versions
@@ -213,8 +220,82 @@ function Get-DataDir($hit) {
     return $new
 }
 
+function Get-ApacheVersions {
+    if (-not (Test-Path $Script:P.ApacheRoot)) { return @() }
+    $out = @()
+    foreach ($d in (Get-ChildItem $Script:P.ApacheRoot -Directory -ErrorAction SilentlyContinue)) {
+        $exe = Join-Path $d.FullName 'bin\httpd.exe'
+        if (-not (Test-Path $exe)) {
+            $f = Get-ChildItem $d.FullName -Recurse -File -Filter 'httpd.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($f) { $exe = $f.FullName } else { $exe = $null }
+        }
+        if ($exe -and (Test-Path $exe)) {
+            # ServerRoot ต้องเป็นโฟลเดอร์ที่มี bin\ และ modules\ (zip ของ Apache Lounge จะมี Apache24 ซ้อนอยู่)
+            $dir = Split-Path -Parent $exe
+            if ((Split-Path -Leaf $dir) -ieq 'bin') { $dir = Split-Path -Parent $dir }
+            $ver = $null
+            if ($d.Name -match '(\d+\.\d+\.\d+)') { $ver = $Matches[1] }
+            $out += [pscustomobject]@{ Version = $ver; Name = $d.Name; Dir = $dir; Httpd = $exe }
+        }
+    }
+    return ($out | Sort-Object { if ($_.Version) { [version]$_.Version } else { [version]'0.0.0' } })
+}
+
+function Resolve-Apache([string]$wanted) {
+    # @() บังคับให้เป็น array เสมอ — PS5.1 คืน $null สำหรับ .Count ของ object เดียว
+    $l = @(Get-ApacheVersions)
+    if (-not $wanted) { if ($l.Count -ge 1) { return $l[-1] }; return $null }
+    $e = $l | Where-Object { $_.Version -eq $wanted -or $_.Name -eq $wanted } | Select-Object -First 1
+    if ($e) { return $e }
+    $p = $l | Where-Object { $_.Version -like "$wanted*" -or $_.Name -like "*$wanted*" } | Select-Object -Last 1
+    if ($p) { return $p }
+    return $null
+}
+
+function Resolve-MySql([string]$wanted) {
+    $l = @(Get-MySqlVersions | Sort-Object { if ($_.Version) { [version]$_.Version } else { [version]'0.0.0' } })
+    if (-not $wanted) { if ($l.Count -ge 1) { return $l[-1] }; return $null }
+    $e = $l | Where-Object { $_.Version -eq $wanted -or $_.Name -eq $wanted } | Select-Object -First 1
+    if ($e) { return $e }
+    $p = $l | Where-Object { $_.Version -like "$wanted*" -or $_.Name -like "*$wanted*" } | Select-Object -Last 1
+    if ($p) { return $p }
+    return $null
+}
+
+function Resolve-WebMode($cfg, $php, $apache) {
+    switch ("$($cfg.webMode)".ToLower()) {
+        'apache'  { return 'apache' }
+        'builtin' { return 'builtin' }
+        default   {
+            # auto: ใช้ Apache ถ้ามี ครบทั้ง httpd + php8apache2_4.dll (Thread Safe)
+            if ($apache -and $php -and (Test-Path (Join-Path $php.Dir 'php8apache2_4.dll'))) { return 'apache' }
+            return 'builtin'
+        }
+    }
+}
+
+function New-HttpdConf($cfg, $php, $apacheHit) {
+    Ensure-Dirs
+    $tpl = Join-Path $Script:P.Templates 'httpd.conf.tpl'
+    if (-not (Test-Path $tpl)) { throw "ไม่พบ template: $tpl" }
+    $conf = (Get-Content $tpl -Raw -Encoding UTF8).TrimStart([char]0xFEFF)
+    $map = @{
+        '{{APACHE_DIR}}' = ($apacheHit.Dir -replace '\\', '/')
+        '{{PHP_DIR}}'    = ($php.Dir -replace '\\', '/')
+        '{{PHP_INI}}'    = ($Script:P.ConfigDir -replace '\\', '/')
+        '{{WWW}}'        = ($Script:P.Www -replace '\\', '/')
+        '{{LOGS}}'       = ($Script:P.Logs -replace '\\', '/')
+        '{{PORT}}'       = "$($cfg.httpPort)"
+    }
+    foreach ($k in $map.Keys) { $conf = $conf.Replace($k, $map[$k]) }
+    $out = Join-Path $Script:P.Runtime 'httpd.conf'
+    # Apache อ่าน BOM ไม่ออก -> ต้องเขียน UTF-8 ไม่มี BOM
+    Write-Utf8NoBom $out $conf
+    return $out
+}
+
 function Resolve-App($wanted) {
-    $list = Get-AppVersions
+    $list = @(Get-AppVersions)
     if (-not $wanted) { if ($list.Count -ge 1) { return $list[-1] }; return $null }
     $e = $list | Where-Object { $_.Name -eq $wanted } | Select-Object -First 1
     if ($e) { return $e }
@@ -224,7 +305,7 @@ function Resolve-App($wanted) {
 }
 
 function Resolve-Php($wanted) {
-    $list = Get-PhpVersions
+    $list = @(Get-PhpVersions)
     if (-not $wanted) { if ($list.Count -ge 1) { return $list[-1] }; return $null }
     $e = $list | Where-Object { $_.Version -eq $wanted } | Select-Object -First 1
     if ($e) { return $e }
@@ -428,7 +509,7 @@ function Start-Db($cfg) {
         Write-Warn2 "พอร์ต $($cfg.dbPort) ถูกใช้อยู่โดย process อื่น (PID $(Get-PortPid $cfg.dbPort)) — ข้าม MariaDB"
         return $false
     }
-    $hit = Get-MySqlVersions | Sort-Object { if ($_.Version) { [version]$_.Version } else { [version]'0.0.0' } } | Select-Object -Last 1
+    $hit = Resolve-MySql $cfg.mysql
     if (-not $hit) { Write-Warn2 'ไม่พบ MariaDB/MySQL ใน stack\mysql\ — ข้าม'; return $false }
 
     $datadir = Get-DataDir $hit
@@ -469,6 +550,44 @@ function Start-Web($cfg) {
     if (-not $php) { Write-Err2 'ไม่พบ PHP — ใช้: aptstack add php <zip>'; return $false }
     if (-not $php.Usable) { Write-Err2 "PHP $($php.Version) ไม่มี php.exe"; return $false }
 
+    $apache = Resolve-Apache $cfg.apache
+    $mode = Resolve-WebMode $cfg $php $apache
+
+    if ($mode -eq 'apache') {
+        if (-not $apache) { Write-Err2 'webMode=apache แต่ไม่พบ httpd — ใช้: aptstack add apache <zip>'; return $false }
+        if (-not (Test-Path (Join-Path $php.Dir 'php8apache2_4.dll'))) {
+            Write-Err2 "PHP $($php.Version) เป็น NTS — ใช้กับ mod_php ไม่ได้ (ต้อง Thread Safe)"
+            Write-Info 'ลอง: aptstack use php 8.3.36 หรือ add PHP แบบ Win32-vs16-x64 (ไม่ใช่ -nts-)'
+            return $false
+        }
+        $conf = New-HttpdConf $cfg $php $apache
+        # native โปรแกรมเขียนลง stderr -> ต้องหยุด EAP=Stop ไม่งั้นโยน exception แทนที่จะรายงานสวยๆ
+        $oldEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { $syntax = & $apache.Httpd -f $conf -t 2>&1 } catch { $syntax = @("$($_.Exception.Message)") }
+        $httpdCode = $LASTEXITCODE
+        $ErrorActionPreference = $oldEap
+        if ($httpdCode -ne 0) {
+            Write-Err2 "httpd -t ไม่ผ่าน:"
+            foreach ($s in $syntax) { Write-Info "$s" }
+            return $false
+        }
+        $p = Start-Process -FilePath $apache.Httpd -ArgumentList @('-f', $conf) -PassThru -WindowStyle Hidden
+        Set-Pid 'web' $p.Id
+        for ($w = 0; $w -lt 15; $w++) {
+            Start-Sleep -Seconds 1
+            if (-not (Test-PortFree $cfg.httpPort)) { break }
+        }
+        if (Test-PortFree $cfg.httpPort) {
+            Write-Err2 "Apache ไม่ขึ้น — ดู logs\apache-error.log"
+            Clear-Pid 'web'
+            return $false
+        }
+        Write-Ok "Apache $($apache.Version) + mod_php (PHP $($php.Version)) -> http://127.0.0.1:$($cfg.httpPort)"
+        Write-Info "conf: $conf"
+        return $true
+    }
+
     $ini = New-PhpIni $php.Dir
     $router = Join-Path $Script:P.Www 'router.php'
     $argList = @('-c', $ini, '-S', "127.0.0.1:$($cfg.httpPort)", '-t', $Script:P.Www)
@@ -485,13 +604,25 @@ function Start-Web($cfg) {
         Clear-Pid 'web'
         return $false
     }
-    Write-Ok "Web server ทำงานแล้ว -> http://127.0.0.1:$($cfg.httpPort)  (PHP $($php.Version))"
+    Write-Ok "PHP built-in server (PHP $($php.Version)) -> http://127.0.0.1:$($cfg.httpPort)"
     return $true
 }
 
 function Stop-Web {
+    $cfg = Get-Config
+    $php = Resolve-Php $cfg.php
+    $apache = Resolve-Apache $cfg.apache
+    if ($apache -and (Resolve-WebMode $cfg $php $apache) -eq 'apache') {
+        $conf = Join-Path $Script:P.Runtime 'httpd.conf'
+        if (Test-Path $conf) {
+            $oldEap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { & $apache.Httpd -f $conf -k stop 2>&1 | Out-Null; Start-Sleep -Seconds 2 } catch { }
+            $ErrorActionPreference = $oldEap
+        }
+    }
     Stop-ByPidFile 'web'
-    Stop-ByPort -port (Get-Config).httpPort -label 'web'
+    Stop-ByPort -port $cfg.httpPort -label 'web'
 }
 
 function Stop-Db {
@@ -503,7 +634,7 @@ function Stop-Db {
         return
     }
     if (Test-Running 'mysql') {
-        $hit = Get-MySqlVersions | Select-Object -Last 1
+        $hit = Resolve-MySql $cfg.mysql
         $ok = $false
         if ($hit) { $ok = Invoke-DbAdmin $hit @('shutdown') }
         if ($ok) {
@@ -658,9 +789,66 @@ function Switch-Php {
     }
 }
 
+function Switch-MySql {
+    param([Parameter(Mandatory)][string]$Version, [switch]$NoRestart)
+    $hit = Resolve-MySql $Version
+    if (-not $hit) { throw "ไม่พบ MySQL/MariaDB '$Version' — เพิ่มก่อน: aptstack add mysql <zip>" }
+    $cfg = Get-Config
+    $newVal = if ($hit.Version) { $hit.Version } else { $hit.Name }
+    if ($cfg.mysql -and $cfg.mysql -ne $newVal) { $cfg.mysqlPrev = $cfg.mysql }
+    $cfg.mysql = $newVal
+    Save-Config $cfg
+
+    $dd = Get-DataDir $hit
+    Write-Host ''
+    Write-Host "  MySQL -> $newVal" -ForegroundColor Green -NoNewline
+    Write-Host "   $($hit.Dir)" -ForegroundColor DarkGray
+    Write-Info "datadir : $dd"
+    Write-Info 'datadir แยกต่อ version -> สลับแล้วข้อมูลไม่ปนกัน และไม่ถูก upgrade แบบไม่ตั้งใจ'
+    if ($cfg.dbMode -eq 'external') { Write-Warn2 'dbMode=external อยู่ — คำสั่งนี้จะมีผลเมื่อเปลี่ยนเป็น internal' }
+
+    if (Test-Running 'mysql') {
+        if ($NoRestart) { Write-Warn2 'MySQL รันอยู่ — ต้องรัน: aptstack restart'; return }
+        Write-Host ''
+        Stop-Db
+        Start-Sleep -Seconds 1
+        Start-Db (Get-Config) | Out-Null
+    } else { Write-Info 'MySQL ยังไม่รัน — aptstack start' }
+}
+
+function Switch-Apache {
+    param([Parameter(Mandatory)][string]$Version, [switch]$NoRestart)
+    $hit = Resolve-Apache $Version
+    if (-not $hit) { throw "ไม่พบ Apache '$Version' — เพิ่มก่อน: aptstack add apache <zip>" }
+    $cfg = Get-Config
+    if ($cfg.apache -and $cfg.apache -ne $hit.Version) { $cfg.apachePrev = $cfg.apache }
+    $cfg.apache = $hit.Version
+    if ("$($cfg.webMode)".ToLower() -eq 'builtin') { $cfg.webMode = 'apache' }
+    Save-Config $cfg
+
+    $php = Resolve-Php $cfg.php
+    if (-not $php -or -not (Test-Path (Join-Path $php.Dir 'php8apache2_4.dll'))) {
+        Write-Warn2 "PHP $($cfg.php) ไม่มี php8apache2_4.dll (NTS) — Apache mod_php จะ start ไม่ขึ้น"
+        Write-Info 'สลับ PHP ก่อน: aptstack use php 8.3.36'
+    }
+
+    Write-Host ''
+    Write-Host "  Apache -> $($hit.Version)" -ForegroundColor Green -NoNewline
+    Write-Host "   $($hit.Dir)" -ForegroundColor DarkGray
+    Write-Info "webMode = $($cfg.webMode)"
+
+    if (Test-Running 'web') {
+        if ($NoRestart) { Write-Warn2 'web รันอยู่ — ต้องรัน: aptstack restart'; return }
+        Write-Host ''
+        Stop-Web
+        Start-Sleep -Seconds 1
+        Start-Web (Get-Config) | Out-Null
+    } else { Write-Info 'web ยังไม่รัน — aptstack start' }
+}
+
 function Select-Interactive {
-    $apps = Get-AppVersions
-    $phps = Get-PhpVersions
+    $apps = @(Get-AppVersions)
+    $phps = @(Get-PhpVersions)
     $cfg = Get-Config
     $curApp = Get-CurrentAppName
     Write-Host ''
@@ -692,7 +880,7 @@ function Select-Interactive {
 }
 
 function Step-App($delta) {
-    $list = Get-AppVersions
+    $list = @(Get-AppVersions)
     if ($list.Count -lt 2) { throw 'ต้องมี app version อย่างน้อย 2 — ใช้: aptstack add app <folder|zip>' }
     $cur = Get-CurrentAppName
     $idx = 0
@@ -713,7 +901,8 @@ function Cmd-Use($component, $ver) {
             }
         }
         'app'    { if (-not $ver) { throw 'ใช้: aptstack use app <version>' }; Switch-App -Version $ver }
-        'mysql'  { Write-Warn2 'ตอนนี้ใช้ MariaDB ตัวเดียวใน bundle — ถ้าเพิ่มตัวใหม่ใน stack\mysql\ แล้วจะสลับได้' }
+        'mysql'  { if (-not $ver) { throw 'ใช้: aptstack use mysql <version>' }; Switch-MySql -Version $ver }
+        'apache' { if (-not $ver) { throw 'ใช้: aptstack use apache <version>' }; Switch-Apache -Version $ver }
         '-'      { $c = Get-Config; if (-not $c.appPrev) { throw 'ยังไม่มีประวัติ — สลับอย่างน้อย 2 ครั้งก่อน' }; Switch-App -Version $c.appPrev }
         default  {
             $apps = Get-AppVersions | Where-Object { $_.Name -eq $component -or $_.Name -like "$component*" } | Select-Object -Last 1
@@ -744,7 +933,7 @@ function Get-DownloadedZip($source) {
 
 function Expand-AndFlatten($zip, $dest) {
     Expand-Archive -Path $zip -DestinationPath $dest -Force
-    $kids = Get-ChildItem $dest -Force
+    $kids = @(Get-ChildItem $dest -Force)
     if ($kids.Count -eq 1 -and $kids[0].PSIsContainer) {
         $inner = $kids[0].FullName
         Get-ChildItem $inner -Force | Move-Item -Destination $dest -Force
@@ -804,7 +993,29 @@ function Cmd-Add($kind, $source, $extra) {
             Expand-AndFlatten $src $dest
             Write-Ok "ติดตั้งแล้ว — datadir จะถูกสร้างใหม่ต่อ version (data ไม่ปนกัน)"
         }
-        default { throw "ไม่รู้จักชนิด: $kind (ใช้ app | php | mysql)" }
+        'apache' {
+            $src = Get-DownloadedZip $source
+            if (Test-Path $src -PathType Container) { throw 'Apache ต้องเป็นไฟล์ .zip' }
+            $leaf = [IO.Path]::GetFileNameWithoutExtension((Split-Path $src -Leaf))
+            $name = if ($leaf -match 'httpd-(\d+\.\d+\.\d+)') { "httpd-$($Matches[1])" } else { $leaf }
+            $dest = Join-Path $Script:P.ApacheRoot $name
+            if (Test-Path $dest) { Write-Warn2 "มีอยู่แล้ว: $dest"; return }
+            Write-Head "ติดตั้ง Apache -> stack\apache\$name"
+            Expand-AndFlatten $src $dest
+            $httpd = Join-Path $dest 'bin\httpd.exe'
+            if (-not (Test-Path $httpd)) {
+                $f = Get-ChildItem $dest -Recurse -File -Filter 'httpd.exe' | Select-Object -First 1
+                if ($f) { $httpd = $f.FullName } else { throw 'zip ไม่มี bin\httpd.exe' }
+            }
+            $php = Resolve-Php (Get-Config).php
+            if ($php -and (Test-Path (Join-Path $php.Dir 'php8apache2_4.dll'))) {
+                Write-Ok "Apache พร้อมใช้ mod_php กับ PHP $($php.Version)"
+            } else {
+                Write-Warn2 'PHP ที่เลือกยังไม่มี php8apache2_4.dll (NTS) — ต้องเปลี่ยนเป็น Thread Safe ก่อนใช้ Apache'
+            }
+            Write-Info 'เปิดใช้: แก้ config\stack.json -> "webMode": "apache" แล้ว aptstack restart'
+        }
+        default { throw "ไม่รู้จักชนิด: $kind (ใช้ app | php | mysql | apache)" }
     }
 }
 
@@ -814,7 +1025,7 @@ function Cmd-List {
     $cur = Get-CurrentAppName
     Write-Head 'ติดตั้งอยู่'
 
-    $apps = Get-AppVersions
+    $apps = @(Get-AppVersions)
     Write-Host '  App versions:' -ForegroundColor White
     if ($apps.Count -eq 0) { Write-Warn2 'ยังไม่มี — ใช้: aptstack add app <folder|zip>' }
     foreach ($a in $apps) {
@@ -823,7 +1034,7 @@ function Cmd-List {
         Write-Host "   $mark $($a.Name)$flag" -ForegroundColor $(if ($flag) { 'Yellow' } else { 'Gray' })
     }
 
-    $phps = Get-PhpVersions
+    $phps = @(Get-PhpVersions)
     Write-Host '  PHP:' -ForegroundColor White
     if ($phps.Count -eq 0) { Write-Warn2 'ยังไม่มี — ใช้: aptstack add php <zip|url>' }
     foreach ($p in $phps) {
@@ -833,14 +1044,22 @@ function Cmd-List {
         Write-Host "   $mark $($p.Version)  $($p.Dir)$tag" -ForegroundColor $(if ($tag) { 'Yellow' } else { 'Gray' })
     }
 
-    $dbs = Get-MySqlVersions
+    $dbs = @(Get-MySqlVersions)
     Write-Host '  Database:' -ForegroundColor White
     if ($dbs.Count -eq 0) { Write-Info '(ยังไม่มี)' }
     foreach ($m in $dbs) { Write-Host "     $($m.Version)  $($m.Dir)" -ForegroundColor Gray }
 
+    $aps = @(Get-ApacheVersions)
+    Write-Host '  Apache:' -ForegroundColor White
+    if ($aps.Count -eq 0) { Write-Info '(ยังไม่มี) ใช้ได้ด้วย: aptstack add apache <httpd zip>' }
+    foreach ($a in $aps) { Write-Host "     $($a.Version)  $($a.Dir)" -ForegroundColor Gray }
+
+    $phpCur = Resolve-Php $cfg.php
+    $wm = Resolve-WebMode $cfg $phpCur (Resolve-Apache $cfg.apache)
     Write-Head 'ที่ใช้งาน'
     Write-Host "  App     : $(if ($cur) { $cur } else { '(ยังไม่ได้ตั้ง link)' })"
     Write-Host "  PHP     : $(if ($cfg.php) { $cfg.php } else { '(ยังไม่เลือก)' })"
+    Write-Host "  Web     : $wm   (webMode ใน config\stack.json = $($cfg.webMode))"
     Write-Host "  HTTP    : http://127.0.0.1:$($cfg.httpPort)/$($cfg.appAlias)/"
     Write-Host "  MySQL   : 127.0.0.1:$($cfg.dbPort)"
     Write-Host "  Service : $(if (Get-Service -Name $cfg.serviceName -EA SilentlyContinue) { $cfg.serviceName } else { '(ยังไม่ติดตั้ง)' })"
@@ -924,6 +1143,33 @@ function Cmd-Doctor {
         } else { Write-Ok 'ไม่พบ memory-limit error ใน log (ไม่เข้าข่าย IOC ของ PHP2Shell)' }
     } else { Write-Info 'ยังไม่มี logs\php-error.log (ยังไม่มี error บันทึก)' }
 
+    # 1b) web server mode (Apache + mod_php หรือ PHP built-in)
+    $apacheHit = Resolve-Apache $cfg.apache
+    $wm = Resolve-WebMode $cfg $php $apacheHit
+    if ($wm -eq 'apache') {
+        if (-not $apacheHit) { Write-Err2 'webMode=apache แต่ไม่พบ httpd — aptstack add apache <zip>'; $problems++ }
+        elseif (-not $php -or -not (Test-Path (Join-Path $php.Dir 'php8apache2_4.dll'))) {
+            Write-Err2 'Apache mode ต้องใช้ PHP แบบ Thread Safe (มี php8apache2_4.dll)'; $problems++
+        } else {
+            $conf = Join-Path $Script:P.Runtime 'httpd.conf'
+            if (-not (Test-Path $conf)) { Write-Warn2 'ยังไม่มี config\httpd.conf — รัน aptstack start' }
+            else {
+                $oldEap = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                try { $t = & $apacheHit.Httpd -f $conf -t 2>&1 } catch { $t = @("$($_.Exception.Message)") }
+                $hc = $LASTEXITCODE
+                $ErrorActionPreference = $oldEap
+                if ($hc -ne 0) { Write-Err2 "httpd -t ไม่ผ่าน: $($t -join ' ')"; $problems++ }
+                else { Write-Ok "Apache $($apacheHit.Version) + mod_php (PHP $($php.Version)) — syntax OK" }
+            }
+        }
+        Write-Info "webMode = apache   port = $($cfg.httpPort)"
+    } else {
+        Write-Ok "webMode = PHP built-in server   port = $($cfg.httpPort)"
+        if ($apacheHit) { Write-Info 'มี Apache แล้ว — เปิดใช้ด้วย "webMode": "apache" ใน config\stack.json แล้ว restart' }
+        else { Write-Info 'ยังไม่มี Apache — aptstack add apache <httpd zip> ถ้าต้องใช้ mod_php (production)' }
+    }
+
     # 3) config path ไม่ควรชี้ออกจาก bundle (ปัญหาตอน copy ไปเครื่องอื่น)
     $rootNorm = $Root.Replace('/', '\').TrimEnd('\').ToLowerInvariant()
     foreach ($f in @($Script:P.MySqlIni, $Script:P.PhpIni)) {
@@ -976,7 +1222,7 @@ function Cmd-Doctor {
     if ("$($cfg.dbMode)" -eq 'external') { Write-Ok "dbMode=external — ใช้ MySQL ภายนอกที่ 127.0.0.1:$($cfg.dbPort) (ไม่แตะของ XAMPP)" }
     else {
         $dd = $null
-        $mh = Get-MySqlVersions | Select-Object -Last 1
+        $mh = Resolve-MySql $cfg.mysql
         if ($mh) { $dd = Get-DataDir $mh }
         if ($dd -and $dd.StartsWith($rootNorm, [StringComparison]::OrdinalIgnoreCase)) { Write-Ok "datadir อยู่ใน bundle: $dd" }
         elseif ($dd) { Write-Warn2 "datadir อยู่นอก bundle: $dd" }
@@ -997,7 +1243,7 @@ function Cmd-Doctor {
 # ---------------------------------------------------------------- backup
 function Cmd-Backup($name) {
     $cfg = Get-Config
-    $hit = Get-MySqlVersions | Select-Object -Last 1
+    $hit = Resolve-MySql $cfg.mysql
     if (-not $hit) { throw 'ไม่พบ MySQL/MariaDB' }
     if (Test-PortFree $cfg.dbPort) { throw 'MariaDB ยังไม่รัน — aptstack start ก่อน' }
     Ensure-Dirs
@@ -1023,8 +1269,20 @@ function Cmd-Init {
     Ensure-Dirs
     if (-not (Test-Path $Script:P.Config)) { Save-Config (Get-Config) }
     $cfg = Get-Config
+
+    # ถ้ายังไม่มีแอปเลย -> ติดตั้งตัวอย่าง hello-app ให้ (ของจริงอยู่ใน examples\ ไม่ถูก git ignore)
+    if (@(Get-AppVersions).Count -eq 0) {
+        $ex = Join-Path $Root 'examples\hello-app'
+        if (Test-Path $ex) {
+            $dest = Join-Path $Script:P.Versions 'hello-1.0.0'
+            robocopy $ex $dest /E /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
+            Write-Ok 'ติดตั้งตัวอย่าง app -> versions\hello-1.0.0'
+            Write-Info 'ใช้งาน: aptstack start แล้วเปิด http://127.0.0.1:<port>/<appAlias>/'
+        }
+    }
+
     if (-not (Get-Item -LiteralPath (Join-Path $Script:P.Www $cfg.appAlias) -Force -EA SilentlyContinue)) {
-        $apps = Get-AppVersions
+        $apps = @(Get-AppVersions)
         if ($apps.Count -gt 0) { Set-AppLink $apps[-1].Name; $cfg.app = $apps[-1].Name; Save-Config $cfg }
     }
     $idx = Join-Path $Script:P.Www 'index.php'
@@ -1041,7 +1299,57 @@ echo "mysqli: " . (extension_loaded('mysqli') ? 'OK' : 'MISSING') . "\n";
 '@ | Set-Content -Path $idx -Encoding UTF8
     }
     Write-Ok "เตรียมโครงสร้างที่ $Root"
-    Write-Info 'ต่อไป: aptstack list'
+    Write-Info 'ต่อไป: aptstack start  แล้ว  aptstack seed  (database ตัวอย่าง)'
+}
+
+function Cmd-Seed {
+    $cfg = Get-Config
+    if (Test-PortFree $cfg.dbPort) { throw "Database ยังไม่รัน (port $($cfg.dbPort)) — รัน: aptstack start" }
+    if ("$($cfg.dbMode)" -eq 'external') { Write-Warn2 'dbMode=external — กำลัง import ไปยัง MySQL ภายนอก (ของ XAMPP)' }
+    $sql = Join-Path $Root 'examples\seed.sql'
+    if (-not (Test-Path $sql)) { throw "ไม่พบ $sql" }
+
+    $hit = Resolve-MySql $cfg.mysql
+    if (-not $hit) { throw 'ไม่พบ MySQL/MariaDB client ใน stack\mysql\' }
+    $client = $null
+    foreach ($n in @('bin\mariadb.exe', 'bin\mysql.exe')) {
+        $p = Join-Path $hit.Dir $n
+        if (Test-Path $p) { $client = $p; break }
+    }
+    if (-not $client) {
+        $f = Get-ChildItem $hit.Dir -Recurse -File -Include 'mariadb.exe', 'mysql.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($f) { $client = $f.FullName }
+    }
+    if (-not $client) { throw 'ไม่พบ mariadb.exe / mysql.exe' }
+
+    Write-Head 'import database ตัวอย่าง -> aptstack_demo'
+    $args = @('--skip-ssl', '-h', '127.0.0.1', '-P', "$($cfg.dbPort)", '--protocol=tcp',
+              '--default-character-set=utf8mb4',
+              '-u', $cfg.dbUser, "-p$($cfg.dbPass)", '--force')
+
+    # ต้องส่งไฟล์ .sql เข้า stdin ตรง ๆ (Start-Process -RedirectStandardInput)
+    # ห้าม pipe ด้วย `Get-Content | client` — PowerShell จะ encode string ใหม่ตาม console codepage
+    # ทำให้ตัวหนังสือไทยกลายเป็น ??? ทันทีที่ import
+    $tmpOut = Join-Path $Script:P.Tmp 'seed-out.txt'
+    $tmpErr = Join-Path $Script:P.Tmp 'seed-err.txt'
+    if (-not (Test-Path $Script:P.Tmp)) { New-Item -ItemType Directory -Path $Script:P.Tmp -Force | Out-Null }
+    $p = Start-Process -FilePath $client -ArgumentList $args `
+                       -RedirectStandardInput $sql `
+                       -RedirectStandardOutput $tmpOut `
+                       -RedirectStandardError $tmpErr `
+                       -Wait -PassThru -NoNewWindow
+    $code = $p.ExitCode
+    $out = @()
+    if (Test-Path $tmpOut) { $out += (Get-Content $tmpOut -Encoding UTF8 -ErrorAction SilentlyContinue) }
+    if (Test-Path $tmpErr) { $out += (Get-Content $tmpErr -Encoding UTF8 -ErrorAction SilentlyContinue) }
+
+    if ($code -ne 0) {
+        throw ("import ล้มเหลว (exit $code):`n" + (($out | Select-Object -First 6) -join "`n"))
+    }
+    $countLine = $out | Where-Object { "$_" -match '^\s*\d+\s*$' } | Select-Object -Last 1
+    Write-Ok 'import เรียบร้อย (CREATE DATABASE IF NOT EXISTS — ซ้ำได้)'
+    if ($countLine) { Write-Info "greetings rows: $("$countLine".Trim())" }
+    Write-Info 'เปิดดู:  http://127.0.0.1:<port>/<appAlias>/  แล้วดูตารางด้านล่าง'
 }
 
 function Cmd-Help {
@@ -1062,12 +1370,21 @@ function Cmd-Help {
   aptstack use -                   ย้อนกลับตัวก่อนหน้า
   aptstack next | prev             วนไปตัวถัดไป / ก่อนหน้า
   aptstack use php 8.3.36          สลับ PHP + restart
-  aptstack add app <folder>        copy version ใหม่ลง แล้ว use เลย
+  aptstack use apache 2.4.69       สลับ Apache + restart (mod_php)
+  aptstack use mysql 11.4.13       สลับ MySQL/MariaDB (datadir แยกต่อ version)
+  aptstack add app <folder|zip>    copy version ใหม่ลง แล้ว use เลย
+  aptstack add apache <zip>        เพิ่ม Apache -> stack\apache\
+  aptstack add mysql <zip>         เพิ่ม MySQL/MariaDB -> stack\mysql\
+
+  ── web / db mode (config\stack.json) ─────────────────
+  "webMode":  "auto"|"apache"|"builtin"
+  "dbMode":   "internal"|"external"   external = ยืม MySQL ของ XAMPP
 
   ── เปิด/ปิด ──────────────────────────────────────────
   aptstack start | stop | restart
   aptstack status
   aptstack backup [file.sql]       dump ทุก database ไป data\dumps\
+  aptstack seed                    import database ตัวอย่าง (aptstack_demo)
 
   ── Windows Service ──────────────────────────────────
   aptstack service install         ติดตั้ง service (ต้อง Run as admin)
@@ -1119,6 +1436,7 @@ switch ($Command.ToLower()) {
     'status'      { Cmd-Status }
     'doctor'      { Cmd-Doctor }
     'backup'      { Cmd-Backup $Action }
+    'seed'        { Cmd-Seed }
     'service'     { & (Join-Path $Root 'service.ps1') -Action $Action }
     'service-run' { Cmd-ServiceRun }
     'help'        { Cmd-Help }
