@@ -63,17 +63,28 @@
    (patch version, mitigation ครบ, path ใน bundle, git ไม่มีของ sensitive, IOC ใน log)
 5. **config รวมที่เดียว** (`config\stack.json`) + **data แยกจาก binary** (`data\`)
 6. **phpMyAdmin + router.php** ที่ปรับให้ CodeIgniter รันบน built-in server ได้
+7. **HTTPS / TLS** — `aptstack tls init` (openssl ที่มากับ Apache + trust ให้เอง)
+   และ **`tls import` ใช้ SSL cert จริง** ได้
+8. **Virtual hosts** — `config\vhosts.json` (HTTP + HTTPS) + default vhost กันของเพี้ยน
+9. **`aptstack logs apache|mysql|php|all`**
+10. **health probe หลัง start** — HTTP/HTTPS GET + DB ping รายงาน ms แทนการรอแบบ blind
 
 ---
 
-## 5. ยังไม่รองรับ (เทียบ devstack)
+## 5. เทียบฟีเจอร์ + สิ่งที่ยังไม่รองรับ
 
-| เรื่อง | devstack | aptstack |
+| เรื่อง | devstack 1.2.0 | aptstack 1.1.0 |
 |---|---|---|
-| Apache | ✅ มี template ครบ | ❌ ยังใช้ PHP built-in (single-threaded) |
-| HTTPS | ❌ (แนะนำ mkcert) | ❌ เหมือนกัน |
-| auto virtual-host | ❌ | ❌ |
+| Apache | ✅ มี template ครบ | ✅ **มีจริง** — `add apache` + `use apache <ver>` + mod_php (httpd 2.4.69) |
+| HTTPS / SSL cert จริง | ❌ (แนะนำ mkcert) | ✅ `tls init` (self-signed + trust) / **`tls import` (cert จริง)** |
+| virtual host | ❌ | ✅ `config\vhosts.json` (HTTP + HTTPS) |
+| health probe หลัง start | ❌ รอแบบ blind | ✅ HTTP/HTTPS GET + DB ping (รายงาน ms) |
+| `logs` แยกคำสั่ง | ❌ | ✅ `aptstack logs <apache\|mysql\|php\|all>` |
+| สลับเวอร์ชันแอป | ❌ | ✅ junction + `use -` |
+| Windows Service | ❌ | ✅ compile ด้วย `csc.exe` |
 | โหลด MySQL/Apache ผ่าน URL | ✅ | ⚠️ `add` รับ URL ได้แต่ยังไม่ได้ทดสอบ MySQL/Apache |
+| **ยังไม่มี** | auto-vhost (แก้ไฟล์เอง), HTTPS มีแค่แนะนำ | ACME auto-renew, rate limit, WAF, load balancing, auto-vhost จาก DNS |
 
-> ถ้าต้องขึ้น production → ควรเพิ่ม **Apache + mod_php** (PHP TS ที่โหลดมามี
-> `php8apache2_4.dll` อยู่แล้ว) แล้วเอา `httpd.conf.tpl` ของ devstack มาปรับ
+> สรุป: **ของที่ devstack มี aptstack ทำได้หมด** ( Apache / หลาย version / `use -` )
+> และเพิ่ม HTTPS+cert จริง, vhost, service, health probe, logs, app-version switching
+> ส่วนที่ยังไม่มีทั้งสองตัวคือพวก auto-vhost / load balancing

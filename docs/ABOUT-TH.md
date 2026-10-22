@@ -71,13 +71,25 @@ repo นี้แก้ทั้ง 5 ข้อ และตั้งเป็�
    compile `service\AptStackService.cs` ด้วย `csc.exe` ที่มากับ Windows
    → ไม่ต้องโหลด NSSM/WinSW, ปิด stack แบบ clean ผ่าน stop-flag, `sc failure` ให้ restart เอง
 
-5. **ยืม MySQL ของ XAMPP ได้โดยไม่ kill ของคนอื่น**
+5. **HTTPS + Virtual host ใช้ได้จริง** (เพิ่มใน 1.1.0)
+   ```cmd
+   aptstack tls init                          :: self-signed + เปิด 8443 + trust ให้
+   aptstack tls import fullchain.pem privkey.pem   :: SSL cert จริง (Let's Encrypt/พาณิชย์)
+   ```
+   - ใช้ `openssl.exe` ที่ **มากับ Apache** → ไม่ต้องติดตั้งอะไรเพิ่ม
+   - **ใส่ cert เข้า Trusted Root ของผู้ใช้ให้อัตโนมัติ** เพราะการปลดด้วย
+     `ServerCertificateValidationCallback` บน PS 5.1 **ใช้ไม่ได้จริง** (ทดสอบแล้ว)
+   - `config\vhosts.json` แยกหลายแอป/หลายชื่อ host บน Apache ตัวเดียว
+     และ**ใส่ default vhost ไว้ก่อนเสมอ** จึงไม่ทำให้ `http://127.0.0.1:8077/` เพี้ยน
+   - ตรวจครบใน `doctor`: หมดอายุ / private key / trust / probe HTTPS จริง / นับ vhost
+
+6. **ยืม MySQL ของ XAMPP ได้โดยไม่ kill ของคนอื่น**
    `"dbMode": "external"` → aptstack จะไม่ start/stop แตะ port นั้นเลย
    (เหมาะกับเครื่องที่มี XAMPP อยู่แล้ว)
 
-6. **กันข้อมูลจริงออกจาก public repo เป็นระบบ**
+7. **กันข้อมูลจริงออกจาก public repo เป็นระบบ**
    `.gitignore` + `doctor` เช็คซ้ำ + `git archive` ตอน build release
-   → release zip มี **26 ไฟล์ / 63KB** (scripts + templates + docs + ตัวอย่าง)
+   → release zip มี **27 ไฟล์ ~130KB** (scripts + templates + docs + ตัวอย่าง)
    ไม่มีทางเผลอเอา datadir / dump / โค้ดแอป ขึ้นไปได้เลย
 
 ### สิ่งที่ทำให้ใช้ได้จริงภายใน 5 นาที
@@ -85,6 +97,8 @@ repo นี้แก้ทั้ง 5 ข้อ และตั้งเป็�
 - `examples/hello-app` + `examples/seed.sql` + `aptstack seed`
   → แตก zip → `init` → `start` → `seed` → เปิดหน้าเว็บ
   **เห็นตาราง greetings จาก database = พิสูจน์ web+PHP+DB รันได้จริง** (ทดสอบแล้ว)
+- `start` **health probe จริง** (HTTP/HTTPS GET + DB ping รายงาน ms) ไม่ใช่รอแบบ blind
+- `aptstack logs apache|mysql|php` ดู log ได้ทันทีเมื่อมีปัญหา
 
 ---
 
@@ -114,13 +128,16 @@ repo นี้แก้ทั้ง 5 ข้อ และตั้งเป็�
 - มี **server ในเครื่องเดียวหลายตัว** (XAMPP อยู่แล้ว + ตัวใหม่) → `dbMode external`
 - ต้องการ **rollback ทันที** เมื่อ deploy แล้วมีปัญหา
 - อยากได้ **health check ที่ fail ได้** ก่อนขึ้นของจริง (เช็คช่องโหว่ PHP)
+- ต้องการ **HTTPS + หลาย vhost** ในเครื่องเดียว โดยไม่อยากตั้ง Apache เอง
+  (มี self-signed ให้ทดสอบ และรองรับ cert จริง)
 
 **ไม่ควรใช้**
 
-- ต้องการ web server ระดับ production เต็มรูปแบบ (HTTPS, vhost, load balancing)
-  → ใช้ตัวนี้เป็น **ฐาน** แล้วต่อ reverse proxy
+- ต้องการ web server ระดับ production เต็มรูปแบบ
+  (load balancing, rate limit, WAF, ACME auto-renew)
+  → HTTPS/vhost **มีแล้ว** แต่ยังไม่มีตัวเหล่านี้ — ใช้เป็น**ฐาน**แล้วต่อ reverse proxy
 - เครื่องต้องรันหลายเว็บไซต์พร้อมกันหลายคนมาก ๆ โดยไม่มี proxy →
-  ใช้ `webMode=apache` (mod_php) แทน builtin
+  ใช้ `webMode=apache` (mod_php) แทน builtin (builtin = single-threaded)
 
 ---
 
