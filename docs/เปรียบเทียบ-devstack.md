@@ -1,7 +1,9 @@
-# เปรียบเทียบ devstack (Hermes) vs aptstack
+# เปรียบเทียบ devstack vs aptstack
 
-> อ้างอิงไฟล์จริง: `devstack-1.1.0-from-hermes.zip`, `devstack-1.2.0-from-hermes.zip`
-> และ `APT-Standalone` (ต้นแบบฝั่งแอป ระบบงานของหน่วยงาน)
+> **devstack** = โปรเจกต์ที่เจ้าของสร้างเองเริ่มจาก 0 (ด้วย AI `deepseek-v4.1-flash`
+> บน `opencode-go` / Hermes) — aptstack ยืมแนวคิดมาต่อยอด ไม่ใช่ fork
+> · อ้างอิงไฟล์จริง: `devstack-1.1.0-from-hermes.zip`, `devstack-1.2.0-from-hermes.zip`
+> (ชื่อไฟล์ต้นฉบับ) · เทียบกับ `APT-Standalone`
 
 ---
 

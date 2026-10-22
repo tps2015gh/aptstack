@@ -9,15 +9,15 @@
 
 | โปรเจกต์ | Model ที่ใช้สร้าง | รันบน | หมายเหตุ |
 |---|---|---|---|
-| **aptstack** (repo นี้) | **MiMo-V2.6-Flash** | **MimoCode** | พัฒนาต่อจาก APT-Standalone + ยืมแนวคิดจาก devstack |
-| **devstack 1.1.0 / 1.2.0** | **deepseek-v4.1-flash** | **opencode-go** (ทีม Hermes) | ต้นแบบแนวคิด "สลับ version ด้วยคำสั่งเดียว" + ตารางเวอร์ชัน PHP ปลอดภัย |
+| **aptstack** (repo นี้) | **MiMo-V2.6-Flash** | **MimoCode** | พัฒนาต่อจาก APT-Standalone + ยืมแนวคิดจาก devstack (ของคุณ) |
+| **devstack 1.1.0 / 1.2.0** | **deepseek-v4.1-flash** | **opencode-go (บน Hermes)** | **สร้างโดยคุณเอง เริ่มจาก 0** ด้วย AI บน Hermes — ต้นแบบแนวคิด "สลับ version ด้วยคำสั่งเดียว" + ตารางเวอร์ชัน PHP ปลอดภัย |
 | **APT-Standalone** | — | — | ต้นแบบฝั่งแอปจริง (bundle คล้าย XAMPP: MariaDB 3307 + PHP built-in 8077 + phpMyAdmin) |
 
 **หลักการที่ยึด:** ให้เครดิตของจริง —
 `templates/` แบบ generate-ใหม่-ทุกครั้ง, UX คำสั่ง `add`/`use`/`list`/`doctor`,
 `use -` ย้อนกลับ, `next`/`prev`, เมนูเลือกด้วยเลข และตารางเลข version ปลอดภัยของ PHP
-**ล้วนมาจากระบบของ devstack (ทีม Hermes)** รายละเอียดเทียบให้ครบใน
-[เปรียบเทียบ-devstack.md](เปรียบเทียบ-devstack.md)
+**ล้วนมาจาก devstack ที่คุณสร้างเองเริ่มจาก 0** (ด้วย deepseek-v4.1-flash บน opencode-go/Hermes)
+รายละเอียดเทียบให้ครบใน [เปรียบเทียบ-devstack.md](เปรียบเทียบ-devstack.md)
 
 ส่วนที่ **aptstack เพิ่มเอง** ดูหัวข้อ 3
 
@@ -149,5 +149,5 @@ repo นี้แก้ทั้ง 5 ข้อ และตั้งเป็�
 
 ---
 
-*สร้างด้วย MiMo-V2.6-Flash บน MimoCode · ต้นแบบแนวคิดมาจาก devstack ของทีม Hermes
-(สร้างด้วย deepseek-v4.1-flash บน opencode-go) · MIT*
+*สร้างด้วย MiMo-V2.6-Flash บน MimoCode · ต้นแบบแนวคิดมาจาก devstack
+ที่คุณสร้างเองเริ่มจาก 0 (ด้วย deepseek-v4.1-flash บน opencode-go / Hermes) · MIT*
