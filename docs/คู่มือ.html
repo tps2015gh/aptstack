@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>คู่มือใช้งาน aptstack</title>
+<style>
+  :root{
+    --bg:#0f1115; --card:#171a21; --fg:#e6e8ee; --mut:#9aa3b2;
+    --acc:#4cc2ff; --ok:#38d178; --warn:#ffc857; --err:#ff6b6b; --line:#262b36;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:"Sarabun","Noto Sans Thai","Leelawadee UI",Tahoma,sans-serif;
+    line-height:1.75;font-size:16px}
+  .wrap{max-width:940px;margin:0 auto;padding:32px 20px 80px}
+  header{border-bottom:2px solid var(--line);padding-bottom:16px;margin-bottom:28px}
+  h1{font-size:30px;margin:0 0 6px}
+  h2{font-size:22px;margin:44px 0 12px;padding-top:14px;border-top:1px solid var(--line);color:var(--acc)}
+  h3{font-size:18px;margin:26px 0 8px;color:#fff}
+  p{margin:10px 0;color:#d5d9e2}
+  .sub{color:var(--mut);font-size:14px;margin:0}
+  a{color:var(--acc)}
+  code,pre{font-family:"Cascadia Code",Consolas,"Courier New",monospace}
+  code{background:#1e222b;border:1px solid var(--line);border-radius:4px;
+    padding:1px 6px;font-size:14px;color:#9fe8ff}
+  pre{background:#12151b;border:1px solid var(--line);border-radius:8px;
+    padding:14px 16px;overflow-x:auto;font-size:13.5px;line-height:1.6}
+  pre code{background:none;border:0;padding:0;color:#cfe3ff}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14.5px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:#1b1f28;color:#fff}
+  tr:nth-child(even) td{background:#14171e}
+  .box{border-left:4px solid var(--acc);background:var(--card);
+    padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .box.ok{border-color:var(--ok)}
+  .box.warn{border-color:var(--warn)}
+  .box.err{border-color:var(--err)}
+  .box b{color:#fff}
+  .tag{display:inline-block;background:#1e222b;border:1px solid var(--line);
+    border-radius:999px;padding:1px 10px;font-size:13px;color:var(--mut);margin-left:6px}
+  .ok-t{color:var(--ok);font-weight:700}
+  .err-t{color:var(--err);font-weight:700}
+  .warn-t{color:var(--warn);font-weight:700}
+  ul,ol{padding-left:22px}
+  li{margin:5px 0;color:#d5d9e2}
+  .nav{background:var(--card);border:1px solid var(--line);border-radius:8px;
+    padding:12px 16px;font-size:14.5px}
+  .nav a{margin-right:14px;text-decoration:none}
+  footer{margin-top:56px;padding-top:16px;border-top:1px solid var(--line);
+    color:var(--mut);font-size:13.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>คู่มือใช้งาน aptstack</h1>
+  <p class="sub">ฉบับสั้น เน้นลงมือทำ · Portable PHP + MariaDB + จัดการเวอร์ชันแอป สำหรับ Windows</p>
+</header>
+
+<div class="nav">
+  <b>เนื้อหา:</b>
+  <a href="#s0">คืออะไร</a><a href="#s1">เริ่มใช้</a><a href="#s2">คำสั่ง</a>
+  <a href="#s3">สลับเวอร์ชัน</a><a href="#s4">สลับ PHP</a><a href="#s5">XAMPP</a>
+  <a href="#s6">Service</a><a href="#s7">ย้าย server</a><a href="#s8">แก้ปัญหา</a>
+  <a href="#s9">ความปลอดภัย</a><a href="#s10">โครงสร้าง</a>
+</div>
+
+<h2 id="s0">0. aptstack คืออะไร</h2>
+<p>Portable stack สำหรับ Windows: <b>PHP + MariaDB + จัดการเวอร์ชันแอป</b> อยู่โฟลเดอร์เดียว
+ไม่ต้องติดตั้ง ไม่แตะ registry ย้ายเครื่องด้วยการ copy</p>
+
+<table>
+<tr><th></th><th>XAMPP / Laragon</th><th>aptstack</th></tr>
+<tr><td>ติดตั้ง</td><td>installer + service</td><td>copy โฟลเดอร์</td></tr>
+<tr><td>สลับ PHP</td><td>ทำมือ เสี่ยงพัง</td><td><code>aptstack use php 8.3.36</code></td></tr>
+<tr><td>สลับเวอร์ชันแอป</td><td>ไม่มี</td><td><code>aptstack use 1.2.0</code> + <code>use -</code></td></tr>
+<tr><td>Windows Service</td><td>ติดตั้งมาแล้ว</td><td><code>aptstack service install</code></td></tr>
+<tr><td>MySQL</td><td>ตัวเดียว</td><td>แยก datadir / ยืมของ XAMPP ได้</td></tr>
+<tr><td>ช่องโหว่ PHP</td><td>ไม่เตือน</td><td><code>aptstack doctor</code></td></tr>
+</table>
+
+<h2 id="s1">1. ติดตั้งครั้งแรก</h2>
+<pre><code>cd /d D:\aptstack          <span style="color:#6b7280">:: ห้ามมีช่องว่างใน path (แนะนำ)</span>
+aptstack init              <span style="color:#6b7280">:: สร้างโครงสร้าง</span>
+aptstack list              <span style="color:#6b7280">:: ดูของที่มี</span>
+aptstack start             <span style="color:#6b7280">:: เปิด MariaDB + Web</span>
+aptstack doctor            <span style="color:#6b7280">:: ตรวจสุขภาพ + ช่องโหว่</span></code></pre>
+
+<div class="box ok">
+<b>เปิดเบราว์เซอร์</b><br>
+แอป: <code>http://127.0.0.1:8077/app/</code><br>
+phpMyAdmin: <code>http://127.0.0.1:8077/phpmyadmin/</code><br>
+หน้าทดสอบ PHP: <code>http://127.0.0.1:8077/</code>
+</div>
+
+<p>ลงจากศูนย์ด้วย wizard:</p>
+<pre><code>powershell -ExecutionPolicy Bypass -File setup.ps1 ^
+  -AppDir "C:\deploy\myapp-1.1.0" ^
+  -PhpZip "C:\Downloads\php-8.3.36-Win32-vs16-x64.zip"</code></pre>
+
+<h2 id="s2">2. คำสั่งทั้งหมด</h2>
+<pre><code>aptstack init                    เตรียมโครงสร้าง
+aptstack list (ls, l)            ดู version ที่ติดตั้ง + ที่ใช้อยู่
+
+aptstack add app &lt;folder|zip&gt;    เพิ่มเวอร์ชันแอป -&gt; versions\&lt;name&gt;
+aptstack add php &lt;zip|url&gt;       เพิ่ม PHP        -&gt; stack\php\&lt;ver&gt;
+aptstack add mysql &lt;zip&gt;         เพิ่ม MySQL/MariaDB (ไม่บังคับ)
+
+aptstack use                     เมนูเลือก (แอป + PHP) กดเลข + Enter
+aptstack use 1.2.0               สลับแอป + restart ให้เอง
+aptstack use 1.2                 ใช้ prefix ก็ได้
+aptstack use php 8.3.36          สลับ PHP + restart
+aptstack use -                   ย้อนกลับตัวก่อนหน้า
+aptstack next | prev             วนดูหลายเวอร์ชัน
+
+aptstack start | stop | restart  เปิด/ปิด stack
+aptstack status                  รันอยู่ไหม ใช้ version ไหน
+aptstack doctor                  ตรวจสุขภาพ + ช่องโหว่
+aptstack backup [ชื่อ.sql]       dump ทุก database -&gt; data\dumps\
+
+aptstack service install         ลง Windows Service (ต้อง admin)
+aptstack service uninstall       ถอน
+aptstack service start|stop|status</code></pre>
+<p>ทางลัด: <code>as list</code> = <code>aptstack list</code></p>
+
+<h2 id="s3">3. เปลี่ยนเวอร์ชันแอป (สำคัญที่สุด)</h2>
+<h3>หลักการ</h3>
+<pre><code>www\app   =  junction ชี้ไป  versions\&lt;เวอร์ชันที่ใช้อยู่&gt;</code></pre>
+<p>เปลี่ยนเวอร์ชัน = <b>ย้าย junction + restart</b> ของเก่าอยู่ครบ → ย้อนกลับได้เสมอ</p>
+
+<h3>ขั้นตอน deploy เวอร์ชันใหม่</h3>
+<pre><code>aptstack backup                              <span style="color:#6b7280">:: 1) เผื่อต้องย้อน</span>
+aptstack add app C:\deploy\myapp-1.2.0.zip   <span style="color:#6b7280">:: 2) copy version ใหม่ลง</span>
+aptstack use 1.2.0                           <span style="color:#6b7280">:: 3) สลับ + restart ให้เอง</span>
+<span style="color:#6b7280">:: 4) เปิดเบราว์เซอร์ดู แล้ว</span>
+aptstack doctor</code></pre>
+
+<div class="box warn"><b>มีปัญหา → ย้อนกลับในคำสั่งเดียว</b>
+<pre style="margin:8px 0 0"><code>aptstack use -        <span style="color:#6b7280">:: กลับไปตัวเมื่อกี้ทันที + restart ให้เอง</span></code></pre></div>
+
+<h3>ทดสอบหลายเวอร์ชัน</h3>
+<pre><code>aptstack add app \\server\share\build-2026-10-22
+aptstack next        <span style="color:#6b7280">:: 1.1.0 -&gt; 2026-10-22</span>
+aptstack prev        <span style="color:#6b7280">:: กลับมา</span></code></pre>
+<p>ชื่อเวอร์ชัน = ชื่อโฟลเดอร์ใน <code>versions\</code> ใช้ prefix สั้น ๆ ได้</p>
+
+<h2 id="s4">4. เปลี่ยน PHP (เรื่องความปลอดภัย)</h2>
+<table>
+<tr><th>สาย PHP</th><th>ต้องใช้</th></tr>
+<tr><td>8.5</td><td><span class="ok-t">8.5.12+</span></td></tr>
+<tr><td>8.4</td><td><span class="ok-t">8.4.27+</span></td></tr>
+<tr><td>8.3</td><td><b>8.3.36+ ← แนะนำ</b></td></tr>
+<tr><td>8.2</td><td><span class="ok-t">8.2.35+</span></td></tr>
+<tr><td>≤8.1</td><td><span class="err-t">EOL ไม่มี patch — ห้ามใช้ production</span></td></tr>
+</table>
+
+<pre><code>aptstack add php C:\Downloads\php-8.3.36-Win32-vs16-x64.zip
+aptstack use php 8.3.36
+aptstack list        <span style="color:#6b7280">:: ต้องไม่มีคำว่า "ยังไม่ patch"</span>
+aptstack doctor</code></pre>
+<ul>
+<li><b>Thread Safe (TS)</b> = ไฟล์ลงท้าย <code>Win32-vs16-x64</code> (ไม่ใช่ <code>-nts-</code>)</li>
+<li>ของเดิม 8.1.34 ยังอยู่ → สลับกลับทดสอบโค้ดเก่าได้ แต่<b>ห้ามใช้บน server จริง</b></li>
+</ul>
+
+<div class="box">
+<b>โค้ดแอปเก่า (CodeIgniter 3) บน PHP 8.2+</b> — ถ้าหน้าขาวหรือขึ้น
+<code>Creation of dynamic property ... is deprecated</code> ให้แก้ที่
+<code>versions\&lt;ver&gt;\index.php</code> บรรทัด <code>case 'development':</code>
+<pre style="margin:8px 0 0"><code>error_reporting(E_ALL &amp; ~E_DEPRECATED &amp; ~E_NOTICE &amp; ~E_STRICT);</code></pre>
+</div>
+
+<h2 id="s5">5. ใช้ MySQL ของ XAMPP แทน MariaDB ของ aptstack</h2>
+<p>แก้ <code>config\stack.json</code>:</p>
+<pre><code>{
+  "dbMode": "external",
+  "dbPort": 3306,
+  "httpPort": 8077
+}</code></pre>
+<p>แล้ว <code>aptstack restart</code></p>
+<ul>
+<li>aptstack จะ<b>ไม่ start / ไม่ stop / ไม่ kill</b> MySQL ของ XAMPP</li>
+<li>web + phpMyAdmin ยังรันจาก aptstack (port 8077)</li>
+<li>อย่าลืมให้ phpMyAdmin ชี้ port ตรงกับ <code>dbPort</code></li>
+</ul>
+
+<table>
+<tr><th>ต้องการ</th><th>ตั้งค่า</th></tr>
+<tr><td>MariaDB ของเราเอง (ค่าเริ่มต้น)</td><td><code>"dbMode":"internal"</code>, <code>"dbPort":3307</code></td></tr>
+<tr><td>ยืม MySQL ของ XAMPP</td><td><code>"dbMode":"external"</code>, <code>"dbPort":3306</code></td></tr>
+</table>
+
+<div class="box warn">⚠️ ถ้า XAMPP เปิด port 3306 อยู่ อย่าใช้ <code>dbMode:internal</code> กับ 3306 — ชนกันแน่นอน</div>
+
+<h2 id="s6">6. Windows Service</h2>
+<pre><code><span style="color:#6b7280">:: เปิด cmd ด้วยสิทธิ์ administrator</span>
+aptstack service install
+aptstack service start
+aptstack service status</code></pre>
+<ul>
+<li>compile เองด้วย <code>csc.exe</code> ที่มากับ Windows → <b>ไม่ต้องโหลด NSSM/WinSW</b></li>
+<li>source อยู่ที่ <code>service\AptStackService.cs</code> → ได้ <code>bin\aptstack-svc.exe</code></li>
+<li>register ด้วย <code>sc create</code> + <code>sc failure</code> ให้ restart อัตโนมัติถ้าล่ม</li>
+<li>ปิด stack แบบ clean (แตะ <code>config\stop.flag</code> แล้วรอ) ก่อน kill</li>
+</ul>
+<pre><code>aptstack service uninstall    <span style="color:#6b7280">:: ถอน (admin)</span></code></pre>
+
+<h2 id="s7">7. ย้ายไปเครื่อง server</h2>
+<pre><code><span style="color:#6b7280">:: บนเครื่อง dev</span>
+aptstack stop
+aptstack backup
+
+<span style="color:#6b7280">:: copy ทั้งโฟลเดอร์ไป (ยกเว้น .git)</span>
+robocopy D:\aptstack E:\aptstack /E /XD .git downloads
+
+<span style="color:#6b7280">:: บน server</span>
+cd /d E:\aptstack
+aptstack start
+aptstack doctor            <span style="color:#6b7280">:: ต้องไม่มี [ERR]</span></code></pre>
+<p>ทำไมไม่พังเรื่อง path → <code>config\php.ini</code> และ <code>config\my.ini</code>
+<b>ถูก generate ใหม่ทุกครั้งที่ start</b> จากตำแหน่งที่รันจริง</p>
+
+<h2 id="s8">8. แก้ปัญหาบ่อย</h2>
+<table>
+<tr><th>อาการ</th><th>สาเหตุ</th><th>แก้</th></tr>
+<tr><td>หน้าแอปขาว / <code>mysqli_connect()</code> ไม่มี</td><td>extension ไม่โหลด</td><td><code>aptstack restart</code></td></tr>
+<tr><td><code>Unable to load dynamic library</code></td><td><code>extension_dir</code> ผิด</td><td><code>aptstack restart</code></td></tr>
+<tr><td>พอร์ตชน</td><td>โปรแกรมอื่นจองไว้</td><td>แก้ <code>httpPort</code>/<code>dbPort</code> แล้ว restart</td></tr>
+<tr><td>MariaDB ไม่ขึ้น</td><td>datadir/permission</td><td>ดู <code>logs\mariadb-error.log</code></td></tr>
+<tr><td>Web ไม่ขึ้น</td><td>port/ini</td><td>ดู <code>logs\php-error.log</code></td></tr>
+<tr><td>เปลี่ยน php.ini แล้วไม่เห็นผล</td><td>ถูก generate ทับ</td><td>แก้ที่ <code>templates\</code> แล้ว restart</td></tr>
+<tr><td><code>aptstack</code> ไม่รู้จัก</td><td>อยู่ผิดโฟลเดอร์</td><td><code>cd</code> ก่อน หรือใช้ <code>as</code></td></tr>
+<tr><td>ExecutionPolicy error</td><td>—</td><td>ใช้ <code>aptstack.cmd</code></td></tr>
+</table>
+
+<h2 id="s9">9. ความปลอดภัย</h2>
+<pre><code>aptstack doctor</code></pre>
+<p>ตรวจให้ครบ:</p>
+<ul>
+<li>PHP ตรงเกณฑ์ patch ช่องโหว่ RCE หรือยัง (<code>security-php.txt</code>)</li>
+<li><code>session.upload_progress</code> ปิด / <code>expose_php</code> / <code>allow_url_include</code> / <code>display_errors</code> ปิด</li>
+<li>ถ้ายัง patch ไม่ได้ → ต้องเปิด <b>ทั้งคู่</b>
+  <code>session.upload_progress.enabled=0</code> + <code>memory_limit=-1</code>
+  (<code>security-php2.txt</code> / PHP2Shell) — <code>doctor</code> จะ fail ถ้าไม่ครบ</li>
+<li>path ใน ini ไม่ชี้ออกจากโฟลเดอร์ (copy ไปเครื่องอื่นได้จริง)</li>
+<li>MariaDB bind localhost, <code>local_infile=0</code></li>
+<li>ไม่มี <code>.sql</code> / binary / โค้ดแอป ถูก track ใน git</li>
+<li>IOC: memory-limit error ใน log (สัญญาณถูกเจาะ)</li>
+</ul>
+<div class="box err"><b>ก่อนขึ้น server จริง:</b> เปลี่ยนรหัสผ่าน DB root · ตั้ง <code>dbMode</code> ให้ถูก ·
+<code>aptstack backup</code> · <code>aptstack service install</code> · เปิด firewall เฉพาะที่จำเป็น</div>
+<p>รายละเอียด → <a href="../SECURITY.md">SECURITY.md</a></p>
+
+<h2 id="s10">10. โครงสร้างไฟล์</h2>
+<pre><code>aptstack\
+├── aptstack.cmd / as.cmd       entry
+├── aptstack.ps1                logic ทั้งหมด
+├── setup.ps1                   wizard
+├── service.ps1                 Windows Service
+├── service\AptStackService.cs  source ของ service host
+│
+├── templates\                  ✅ ต้นฉบับ (แก้ตรงนี้, commit ลง git)
+│   ├── php-extensions.ini
+│   ├── php-hardening.ini
+│   └── my.ini.tpl
+│
+├── config\                     ⚠️ config ทั้งหมดอยู่ที่เดียว (gitignore)
+│   ├── stack.json                ★ เลือก version + port
+│   ├── php.ini, my.ini           generate ใหม่ทุก start
+│   ├── pids\  tmp\  stop.flag
+│
+├── stack\                      binary (gitignore)
+│   ├── php\8.3.36\  php\8.1.34\
+│   └── mysql\mariadb-11.4.13-winx64\
+│
+├── versions\                   โค้ดแอป (gitignore)  1.0.0\ 1.1.0\
+├── data\                       database (gitignore)
+│   ├── mariadb-11.4.13-winx64\   datadir
+│   └── dumps\                     *.sql
+│
+├── www\                        docroot
+│   ├── router.php  ✅
+│   ├── phpmyadmin\
+│   └── app    junction -&gt; versions\&lt;active&gt;
+│
+├── logs\  downloads\  bin\
+└── docs\                       คู่มือ</code></pre>
+
+<div class="box ok">
+<b>กฎทอง:</b> <code>templates\</code> = ต้นฉบับ ·
+<code>config\</code> = ค่าที่ generate ·
+<code>stack\</code> = binary ·
+<code>versions\</code> = โค้ด ·
+<code>data\</code> = ข้อมูล
+</div>
+
+<footer>
+  aptstack · MIT ·
+  <a href="คู่มือ.md">คู่มือ (Markdown)</a> ·
+  <a href="../README-TH.md">README-TH</a> ·
+  <a href="../SECURITY.md">SECURITY</a> ·
+  <a href="เปรียบเทียบ-devstack.md">เทียบ devstack</a>
+</footer>
+
+</div>
+</body>
+</html>

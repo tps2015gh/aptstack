@@ -1,0 +1,61 @@
+# ============================================================
+# aptstack .gitignore
+# กันไม่ให้ข้อมูลจริง / binary / runtime หลุดขึ้น repo สาธารณะ
+# ============================================================
+
+# --- binaries (PHP / MariaDB) ---
+/stack/
+/downloads/
+
+# --- ตัว service ที่ compile ได้เองตอนติดตั้ง (build output) ---
+/bin/
+
+# --- app versions (โค้ดแอปจริง + .git ของแอป) ---
+/versions/
+
+# --- runtime ที่ generate ใหม่ได้เสมอ (ค่าจริงของเครื่อง อยู่ที่เดียว) ---
+/config/
+/logs/
+
+# --- ข้อมูลฐานข้อมูล: ห้าม commit เด็ดขาด ---
+/db/
+/data/
+*.sql
+*.sql.gz
+*.sql.bz2
+*.dump
+*.ibd
+*.frm
+*.MYD
+*.MYI
+*.pem
+*.key
+
+# --- state ที่เปลี่ยนตลอดเวลา ---
+/config.json
+*.pid
+stop.flag
+
+# --- www: เก็บเฉพาะ router.php + ตัวอย่าง โค้ดแอปอยู่ใน versions/ ---
+/www/*
+!/www/router.php
+
+# --- legacy scripts ที่ถูกแทนที่ด้วย aptstack ---
+/start-all.bat
+/stop-all.bat
+/_tools/
+/PHP-Portable/
+/src/
+
+# --- editor / OS ---
+.mimocode/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini
+
+# --- secrets ---
+.env
+.env.*
+*.pfx
+*.p12
