@@ -10,6 +10,9 @@
 # --- ตัว service ที่ compile ได้เองตอนติดตั้ง (build output) ---
 /bin/
 
+# --- release artifact: ใช้ GitHub Release อย่างเดียว อย่า commit ทับกัน ---
+/dist/
+
 # --- app versions (โค้ดแอปจริง + .git ของแอป) ---
 /versions/
 
