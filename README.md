@@ -59,11 +59,14 @@ aptstack\
 ├── service\AptStackService.cs  service host source (compiled by service.ps1)
 ├── templates\                <- EDIT THESE (php.ini, my.ini, extensions, hardening)
 ├── config\                   <- ONE config folder (gitignored)
-│   ├── stack.json              version + port selection (the file you edit)
-│   ├── php.ini / my.ini        generated — do not edit
-│   ├── pids\, tmp\, stop.flag
+│   ├── stack.json              version + port + httpsEnabled (the file you edit)
+│   ├── vhosts.json             virtual hosts (edit, then restart)
+│   ├── certs\                  TLS cert/key (aptstack tls init | tls import)
+│   ├── php.ini / my.ini / httpd.conf   generated — do not edit
+│   └── pids\, tmp\, stop.flag
 ├── stack\                    binaries (gitignored)
 │   ├── php\8.3.36\, php\8.1.34\
+│   ├── apache\httpd-2.4.69\
 │   └── mysql\mariadb-11.4.13-winx64\
 ├── versions\                 app source code (gitignored)  versions\1.0.0\, 1.1.0\
 ├── data\                     database (gitignored)  datadir per engine + dumps\
