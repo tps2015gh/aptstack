@@ -107,7 +107,7 @@ repo นี้แก้ทั้ง 5 ข้อ และตั้งเป็�
 | ข้อจำกัด | ผลกระทบ | ทางแก้ |
 |---|---|---|
 | **HTTPS ยังไม่ได้เปิดโดยปริยาย** | ต้องสั่งเอง: `aptstack tls init` (self-signed) หรือ `tls import` (cert จริง) | มีให้แล้วตั้งแต่ 1.1.0 — ใช้ได้กับ `webMode=apache` เท่านั้น |
-| **release ไม่ได้แถม binary** | ต้องโหลด PHP/Apache เอง (~50MB) | คู่มือมีลิงก์ + `add php/apache <zip>` |
+| **release ไม่ได้แถม binary** | ต้องโหลด PHP/Apache เอง (~50MB) | มีวิธีเตรียมแล้ว copy เข้า server ได้เลย (รวม checksum + manual drop-in) → **[docs/OFFLINE-DEPLOY.md](OFFLINE-DEPLOY.md)** |
 | **PHP 8.1 ยังอยู่ใน `stack\php\8.1.34`** | ถ้าเผลอ `use php 8.1.34` = ผ่านเกณฑ์ไม่ได้ | `doctor` จะ **[ERR] ทันที** — เก็บไว้เทียบโค้ดเก่าเท่านั้น |
 | **โค้ดแอปจริง (CodeIgniter 3) รันบน PHP 8.2+ ไม่ได้ทันที** | deprecation หยุด request | แก้ 1 บรรทัดใน `index.php` (คู่มือข้อ 4) |
 | **`root/root` เป็นค่าเริ่มต้น** | อันตรายถ้าขึ้น server จริง | เปลี่ยนรหัสผ่าน + แก้ `config\stack.json` |

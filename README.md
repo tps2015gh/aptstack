@@ -33,6 +33,13 @@ aptstack seed            :: load sample database (proves DB connectivity)
 
 Open <http://127.0.0.1:8077/app/>
 
+> **Offline / air-gapped servers:** `aptstack add` accepts a **local path**, so you can
+> download the PHP/Apache/MariaDB zips on another machine, copy them over (USB / share / RDP),
+> then run `aptstack add php D:\staging\php-8.3.36-Win32-vs16-x64.zip` with no internet access.
+> You may also drop files straight into `stack\php\<ver>\`, `stack\apache\<name>\`,
+> `stack\mysql\<name>\`. Full checklist (checksums, VC++ runtime, manual drop-in,
+> internal mirror URLs) → **[docs/OFFLINE-DEPLOY.md](docs/OFFLINE-DEPLOY.md)**
+
 ```cmd
 :: add + switch app version
 aptstack add app C:\deploy\myapp-1.2.0.zip

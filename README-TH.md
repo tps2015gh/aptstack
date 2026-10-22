@@ -33,6 +33,28 @@ phpMyAdmin → **http://127.0.0.1:8077/phpmyadmin/** (ถ้ามีใน `www
 > ต้องโหลด PHP เอง: `aptstack add php <php-x.y.z-Win32-vs16-x64.zip>`
 > (สายที่ปลอดภัย: 8.3.36 / 8.4.27 / 8.5.12 / 8.2.35)
 
+### โหลด binary แบบ offline / intranet (server ไม่มีเน็ต)
+
+`add` **รับ path ท้องถิ่นอยู่แล้ว** — เตรียม zip บนเครื่องที่มีเน็ต แล้ว copy เข้า server:
+
+```cmd
+:: บนเครื่องมีเน็ต: โหลด zip + sha256sum.txt ไว้ใน D:\staging\
+:: ย้ายเข้า server ด้วย USB / share / RDP copy-paste
+
+cd /d E:\aptstack
+aptstack add php     D:\staging\php-8.3.36-Win32-vs16-x64.zip
+aptstack add apache  D:\staging\httpd-2.4.69-261002-Win64-VS18.zip
+aptstack add mysql   D:\staging\mariadb-11.4.13-winx64.zip
+aptstack use php 8.3.36
+aptstack start
+aptstack doctor
+```
+
+- หรือ**วางไฟล์เอง**ใน `stack\php\<ver>\` / `stack\apache\<name>\` / `stack\mysql\<name>\` ก็ได้
+- `add` ยังรับ **URL mirror ภายใน** ได้: `aptstack add php http://pkg.internal/apt/php.zip`
+- อย่าลืม `vc_redist_x64.exe` ถ้าเครื่อง server ยังไม่มี VC++ runtime
+- ขั้นตอนเต็ม + checksum + checklist → **[docs/OFFLINE-DEPLOY.md](docs/OFFLINE-DEPLOY.md)**
+
 ---
 
 ## งานที่ใช้บ่อย

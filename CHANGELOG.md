@@ -33,8 +33,15 @@
 
 ### Docs
 
-- `docs/คู่มือ.md` + `.html`: ข้อ 5a (HTTPS) และ 5b (vhosts), คำสั่ง logs/tls
-- `README.md` (EN), `README-TH.md`, `SECURITY.md` (ข้อจำกัด HTTPS เปลี่ยนแล้ว)
+- `docs/OFFLINE-DEPLOY.md` **(ใหม่)** — แนวทาง deploy แบบ offline/intranet:
+  โหลด PHP/Apache/MariaDB บนเครื่องที่มีเน็ต → ย้ายไฟล์ → `add` จาก local path
+  (หรือ manual drop-in / internal mirror) + checksum + VC++ runtime + checklist
+- `docs/คู่มือ.md` + `.html`: ข้อ 5a (HTTPS) และ 5b (vhosts), คำสั่ง logs/tls,
+  หมายเหตุ offline ในข้อ 1 และข้อ 8
+- `README.md` (EN), `README-TH.md`, `SECURITY.md`, `docs/ABOUT-TH.md`,
+  `docs/เปรียบเทียบ-devstack.md` (ตารางเทียบฟีเจอร์ปรับเป็นของจริงทั้งหมด)
+- ตัดชื่อ/URL ของระบบจริงที่ hardcode อยู่ในเอกสารและโค้ด ออกทั้งหมด
+  (default `appAlias` เป็น `app` — ไม่มีชื่อระบบเฉพาะเจาะจงเหลือใน package)
 
 ---
 

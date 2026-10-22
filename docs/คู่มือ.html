@@ -103,6 +103,13 @@ phpMyAdmin: <code>http://127.0.0.1:8077/phpmyadmin/</code> ·
   -AppDir "C:\deploy\myapp-1.1.0" ^
   -PhpZip "C:\Downloads\php-8.3.36-Win32-vs16-x64.zip"</code></pre>
 
+<div class="box">
+<b>แบบ offline / intranet (server ไม่มีเน็ต)</b> — <code>add</code> <b>รับ path ท้องถิ่น</b> อยู่แล้ว:<br>
+<code>aptstack add php D:\staging\php-8.3.36-Win32-vs16-x64.zip</code><br>
+หรือวางเองใน <code>stack\php\&lt;ver&gt;\</code> · มี mirror ภายในก็ใช้ URL ภายในได้<br>
+ขั้นตอนเต็ม + checksum + checklist → <a href="OFFLINE-DEPLOY.md">docs/OFFLINE-DEPLOY.md</a>
+</div>
+
 <h2 id="s2">2. คำสั่งทั้งหมด</h2>
 <pre><code>aptstack init                    เตรียมโครงสร้าง
 aptstack list (ls, l)            ดู version ที่ติดตั้ง + ที่ใช้อยู่
