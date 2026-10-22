@@ -175,6 +175,33 @@ aptstack\
 
 ---
 
+## HTTPS / Virtual host / log (เพิ่มใหม่)
+
+```cmd
+:: HTTPS (ใช้ได้กับ webMode=apache)
+aptstack tls init                      :: สร้าง self-signed + เปิด 8443 + trust ให้เลย
+aptstack tls import fullchain.pem privkey.pem   :: ใช้ SSL cert จริง
+aptstack tls status | tls off
+
+:: virtual host (แยกหลายแอป/หลายชื่อ host)
+:: แก้ config\vhosts.json แล้ว aptstack restart
+::   [ { "host": "demo.local", "app": "hello-1.0.0" },
+::     { "host": "apt.local",  "app": "1.1.0" } ]
+
+:: log
+aptstack logs apache | mysql | php     :: ดูท้ายไฟล์ (ใส่ตัวเลข = กี่บรรทัด)
+aptstack logs all
+```
+
+- **health probe หลัง start** — ไม่รอแบบ blind อีกต่อไป:
+  `start` จะยิง HTTP จริง (และ HTTPS ถ้าเปิด) + `ping` database แล้วรายงาน
+  `health: https -> 200 OK (660 ms)` ถ้า fail จะบอกให้เปิด `aptstack logs <ตัว>`
+- `tls init` ใช้ `openssl.exe` ที่มากับ Apache (ไม่ต้องติดตั้งอะไรเพิ่ม)
+  และ**ใส่ cert เข้า Trusted Root ของผู้ใช้ให้** ไม่งั้น .NET/browser ปฏิเสธ
+- ดูรายละเอียด: [docs/คู่มือ.md](docs/คู่มือ.md) ข้อ 5a และ 5b
+
+---
+
 ## แก้ปัญหาบ่อย
 
 | อาการ | ทำอะไร |

@@ -57,6 +57,24 @@ DocumentRoot "{{WWW}}"
     AddType application/x-httpd-php .php
 </IfModule>
 
+# --- default vhost (สำคัญ) ---
+# ทันทีที่มี <VirtualHost *:PORT> สักตัว (จาก config\vhosts.json)
+# Apache จะใช้ "vhost ตัวแรกของ IP:port นั้น" เป็น default แทน server-level DocumentRoot
+# ถ้าไม่ประกาศตัวนี้ไว้ก่อน top ของ list -> request ที่ Host ไม่ตรงจะหลุดไป vhost ตัวแรก
+# ทำให้ http://127.0.0.1:PORT/ เปลี่ยนเจตนาโดยไม่ตั้งใจ
+<VirtualHost *:{{PORT}}>
+    ServerName localhost
+    DocumentRoot "{{WWW}}"
+    <Directory "{{WWW}}">
+        Options -Indexes +FollowSymLinks
+        AllowOverride All
+        Require all granted
+        AcceptPathInfo On
+    </Directory>
+    ErrorLog  "{{LOGS}}/vhost-default-error.log"
+    CustomLog "{{LOGS}}/vhost-default-access.log" common
+</VirtualHost>
+
 # --- security: ห้ามเข้าถึงไฟล์ที่ไม่ควรโชว์ ---
 <FilesMatch "^\.(ht|env|git|svn|ds_store)">
     Require all denied

@@ -90,10 +90,14 @@ repo นี้เป็น **public** — `.gitignore` กันไว้แล�
 
 ## 5. สิ่งที่ aptstack ยัง**ไม่**ทำ (ต้องจัดการเอง)
 
-- ❌ ไม่มี HTTPS → ถ้าเปิดออกเน็ต ให้ใช้ reverse proxy + TLS (เช่น Caddy/Nginx) ไว้หน้า
+- ⚠️ **HTTPS ไม่ได้เปิดโดยปริยาย** — มีให้แล้ว (`aptstack tls init` / `tls import`)
+  แต่**ต้องสั่งเปิดเอง** และใช้ได้กับ `webMode=apache` เท่านั้น
+  ถ้าจะเปิดออกอินเทอร์เน็ต: ใช้ **cert จริง** (`aptstack tls import fullchain.pem privkey.pem`)
+  ไม่ใช่ self-signed
 - ❌ ไม่ patch PHP ให้ — ต้องอัปเดต binary เอง
 - ❌ ไม่ได้แก้ช่องโหว่ในโค้ดแอป (SQL injection / XSS ฯลฯ) — ตรวจด้วย static review ของแอป
-- ❌ ไม่ได้ firewall พอร์ต — พอร์ต 8077/3307 bind localhost แต่ถ้าเปิด firewall ต้องกำหนดเอง
+- ❌ ไม่ได้ firewall พอร์ต — 8077/8443/3307 bind localhost แต่ถ้าเปิด firewall ต้องกำหนดเอง
+- ❌ ไม่มี rate limit / WAF / reverse proxy — ถ้าเปิดสู่ internet ให้ต่อ proxy (Caddy/Nginx) ไว้หน้า
 
 ## 6. Checklist ก่อนขึ้น server จริง
 

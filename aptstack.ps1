@@ -46,6 +46,7 @@ $Script:P = @{
     #   config\stack.json = ค่าที่แก้ได้ (เลือก version + port)
     #   config\php.ini, config\my.ini = generate จาก templates\ (ห้ามแก้)
     ConfigDir = Join-Path $Root 'config'
+    Certs     = Join-Path $Root 'config\certs'
     Runtime   = Join-Path $Root 'config'
     Pids      = Join-Path $Root 'config\pids'
     Tmp       = Join-Path $Root 'config\tmp'
@@ -81,7 +82,7 @@ function Write-Err2($t) { Write-Host "  [ERR]  $t" -ForegroundColor Red }
 function Write-Info($t) { Write-Host "         $t" -ForegroundColor Gray }
 
 function Ensure-Dirs {
-    foreach ($k in @('Stack', 'PhpRoot', 'MySqlRoot', 'ApacheRoot', 'Versions', 'Www', 'Data', 'Dumps', 'ConfigDir', 'Runtime', 'Pids', 'Tmp', 'Logs', 'Templates', 'Downloads')) {
+    foreach ($k in @('Stack', 'PhpRoot', 'MySqlRoot', 'ApacheRoot', 'Versions', 'Www', 'Data', 'Dumps', 'ConfigDir', 'Certs', 'Runtime', 'Pids', 'Tmp', 'Logs', 'Templates', 'Downloads')) {
         $p = $Script:P[$k]
         if (-not (Test-Path $p)) { New-Item -ItemType Directory -Path $p -Force | Out-Null }
     }
@@ -102,6 +103,11 @@ function Get-Config {
         dbPort      = 3307
         dbMode      = 'internal'   # internal = MariaDB ของเรา | external = ใช้ MySQL ของ XAMPP
         webMode     = 'auto'       # auto = ใช้ Apache ถ้ามี ไม่งั้น built-in | apache | builtin
+        httpsEnabled = 'false'     # true = เปิด HTTPS (ใช้ได้กับ webMode=apache)
+        httpsPort   = 8443
+        certFile    = ''           # path ของ PEM cert (เปลี่ยนด้วย: aptstack tls ...)
+        keyFile     = ''           # path ของ PEM private key
+        serverName  = 'localhost'  # ServerName ใน vhost HTTPS
         appAlias    = 'app'
         serviceName = 'AptStack'
         dbUser      = 'root'
@@ -274,6 +280,113 @@ function Resolve-WebMode($cfg, $php, $apache) {
     }
 }
 
+function Resolve-CertPath([string]$p) {
+    if ([string]::IsNullOrWhiteSpace($p)) { return '' }
+    if ($p -match '^[A-Za-z]:[\\/]') { return $p }
+    return (Join-Path $Root $p)
+}
+
+function Get-CertSnippet($cfg) {
+    # คืนเป็นข้อความถ้าพร้อมใช้ ไม่งั้นคืน ''
+    if ("$($cfg.httpsEnabled)".ToLower() -ne 'true') { return '' }
+    $tpl = Join-Path $Script:P.Templates 'ssl.conf.tpl'
+    if (-not (Test-Path $tpl)) { Write-Warn2 'ไม่พบ templates\ssl.conf.tpl — ข้าม HTTPS'; return '' }
+    $cert = Resolve-CertPath $cfg.certFile
+    $key = Resolve-CertPath $cfg.keyFile
+    if (-not (Test-Path $cert) -or -not (Test-Path $key)) {
+        Write-Warn2 'httpsEnabled=true แต่ไม่พบไฟล์ cert/key — ข้าม HTTPS ไปก่อน'
+        Write-Info 'สร้าง: aptstack tls init     |     ใช้ของจริง: aptstack tls import <cert.pem> <key.pem>'
+        return ''
+    }
+    $s = (Get-Content $tpl -Raw -Encoding UTF8).TrimStart([char]0xFEFF)
+    $apache = Resolve-Apache $cfg.apache
+    $m = @{
+        '{{APACHE_DIR}}'  = $(if ($apache) { ($apache.Dir -replace '\\', '/') } else { '' })
+        '{{HTTPS_PORT}}'  = "$($cfg.httpsPort)"
+        '{{WWW}}'         = ($Script:P.Www -replace '\\', '/')
+        '{{LOGS}}'        = ($Script:P.Logs -replace '\\', '/')
+        '{{CERT}}'        = ($cert -replace '\\', '/')
+        '{{KEY}}'         = ($key -replace '\\', '/')
+        '{{SERVER_NAME}}' = $(if ($cfg.serverName) { "$($cfg.serverName)" } else { 'localhost' })
+    }
+    foreach ($k in $m.Keys) { $s = $s.Replace($k, $m[$k]) }
+    return $s
+}
+
+function Get-VhostsSnippet($cfg) {
+    # virtual host จาก config\vhosts.json -> ถูก append เข้า config\httpd.conf
+    # ใช้ได้กับ webMode=apache เท่านั้น (PHP built-in server ไม่มี concept vhost)
+    $src = Join-Path $Script:P.ConfigDir 'vhosts.json'
+    if (-not (Test-Path $src)) { return '' }
+    $raw = (Get-Content $src -Raw -Encoding UTF8)
+    if ([string]::IsNullOrWhiteSpace($raw)) { return '' }
+    try { $items = @((ConvertFrom-Json $raw)) } catch {
+        Write-Warn2 "vhosts.json อ่านไม่ได้: $($_.Exception.Message)"
+        return ''
+    }
+    if ($items.Count -eq 0) { return '' }
+
+    $logsF = ($Script:P.Logs -replace '\\', '/')
+    $sb = New-Object Text.StringBuilder
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('# ---- aptstack virtual hosts (generate จาก config\vhosts.json — ห้ามแก้ตรงนี้) ----')
+    $ssl = (Get-CertSnippet $cfg)
+    $hasSsl = ("$($cfg.httpsEnabled)".ToLower() -eq 'true') -and ($ssl -ne '')
+
+    foreach ($v in $items) {
+        $h = "$($v.host)"
+        if (-not $h) { continue }
+        $app = if ($v.app) { "$($v.app)" } else { "$($cfg.app)" }
+        $dir = Join-Path $Script:P.Versions $app
+        if (-not (Test-Path $dir)) {
+            Write-Warn2 "vhost $h -> ไม่พบ versions\$app (ข้าม)"
+            continue
+        }
+        $port = if ($v.port) { [int]$v.port } else { [int]$cfg.httpPort }
+        $dirF = ($dir -replace '\\', '/')
+        $safe = ($h -replace '[^\w\-.]', '_')
+
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine("# vhost: $h -> versions\$app (port $port)")
+        [void]$sb.AppendLine("<VirtualHost *:$port>")
+        [void]$sb.AppendLine("    ServerName $h")
+        [void]$sb.AppendLine("    DocumentRoot `"$dirF`"")
+        [void]$sb.AppendLine('    <Directory "' + $dirF + '">')
+        [void]$sb.AppendLine('        Options -Indexes +FollowSymLinks')
+        [void]$sb.AppendLine('        AllowOverride All')
+        [void]$sb.AppendLine('        Require all granted')
+        [void]$sb.AppendLine('        AcceptPathInfo On')
+        [void]$sb.AppendLine('    </Directory>')
+        [void]$sb.AppendLine("    ErrorLog  `"$logsF/vhost-$safe-error.log`"")
+        [void]$sb.AppendLine("    CustomLog `"$logsF/vhost-$safe-access.log`" common")
+        [void]$sb.AppendLine('</VirtualHost>')
+
+        # เมื่อเปิด HTTPS แล้ว -> ออก vhost ฝั่ง https ให้ทุก host อัตโนมัติ
+        # (ไม่งั้น https://host-นี้ จะตกไป default vhost)
+        # ยกเว้นเจ้าของ vhost ระบุ "https": false ไว้ชัดเจน
+        $wantSsl = $hasSsl -and ("$($v.https)").ToLower() -ne 'false'
+        if ($wantSsl) {
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine("# vhost (https): $h -> versions\$app (port $($cfg.httpsPort))")
+            $lines = $ssl -split "`r?`n"
+            # แทนที่ VirtualHost/ServerName/DocumentRoot/Directory ของ block SSL หลัก
+            $out2 = @()
+            foreach ($l in $lines) {
+                $l2 = $l
+                $l2 = $l2 -replace '\*:\{\{HTTPS_PORT\}\}', "*:$($cfg.httpsPort)"
+                $l2 = $l2 -replace '\*:' + [regex]::Escape("$($cfg.httpsPort)"), "*:$($cfg.httpsPort)"
+                if ($l2 -match '^\s*ServerName\s') { $l2 = "    ServerName $h" }
+                if ($l2 -match '^\s*DocumentRoot\s') { $l2 = "    DocumentRoot `"$dirF`"" }
+                if ($l2 -match '^\s*<Directory\s') { $l2 = '    <Directory "' + $dirF + '">' }
+                if ($l2 -match 'LoadModule|SSLSessionCache|SSLStrictSNI|^\s*Listen\s') { continue }
+                $out2 += $l2
+            }
+            [void]$sb.AppendLine(($out2 -join "`r`n"))
+        }
+    }
+    return $sb.ToString()
+}
+
 function New-HttpdConf($cfg, $php, $apacheHit) {
     Ensure-Dirs
     $tpl = Join-Path $Script:P.Templates 'httpd.conf.tpl'
@@ -288,6 +401,11 @@ function New-HttpdConf($cfg, $php, $apacheHit) {
         '{{PORT}}'       = "$($cfg.httpPort)"
     }
     foreach ($k in $map.Keys) { $conf = $conf.Replace($k, $map[$k]) }
+
+    # แนบ HTTPS (ถ้าเปิด) + virtual hosts (ถ้ามี config\vhosts.json)
+    $conf += (Get-CertSnippet $cfg)
+    $conf += (Get-VhostsSnippet $cfg)
+
     $out = Join-Path $Script:P.Runtime 'httpd.conf'
     # Apache อ่าน BOM ไม่ออก -> ต้องเขียน UTF-8 ไม่มี BOM
     Write-Utf8NoBom $out $conf
@@ -430,6 +548,58 @@ function Get-PortPid($port) {
     return $null
 }
 
+# --------------------------------------------------------------- health probe
+# ไม่รอแบบ blind (พอร์ตเปิด = จบ) -> ยิง HTTP จริงจนกว่าจะตอบ
+function Invoke-HttpProbe([string]$Url, [int]$TimeoutSec = 5) {
+    # หมายเหตุ: ห้ามใช้ ServerCertificateValidationCallback เพื่อปลด cert check
+    # ผลทดสอบจริงบน PS 5.1 → ใส่ callback แล้วได้ UntrustedRoot สลับไปมา (แย่กว่าเดิม)
+    # วิธีที่ work จริงคือ "ใส่ cert เข้า Trusted Root" (ดู Add-CertTrust / aptstack tls init)
+    try {
+        $r = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec $TimeoutSec -MaximumRedirection 5
+        return [pscustomobject]@{ Ok = $true; Url = $Url; Status = [int]$r.StatusCode; Bytes = [int]$r.RawContentLength; Error = ''; Ms = 0 }
+    } catch {
+        $code = 0
+        try { if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode } } catch { }
+        # server ตอบแล้ว (401/403/404 ก็ตาม) = ถือว่า healthy
+        if ($code -gt 0) {
+            return [pscustomobject]@{ Ok = $true; Url = $Url; Status = $code; Bytes = 0; Error = ''; Ms = 0 }
+        }
+        $msg = "$($_.Exception.Message)"
+        $inner = $_.Exception.InnerException
+        if ($inner) { $msg = "$($inner.Message)" }
+        if ($msg -match 'certificate|UntrustedRoot|SSL') {
+            $msg += '  -> cert ยังไม่ได้ trust: รัน aptstack tls init (จะใส่เข้า Trusted Root ให้)'
+        }
+        return [pscustomobject]@{ Ok = $false; Url = $Url; Status = 0; Bytes = 0; Error = $msg; Ms = 0 }
+    }
+}
+
+function Wait-Healthy([int]$Port, [string]$Path = '/', [int]$Seconds = 20, [string]$Scheme = 'http') {
+    $url = "${Scheme}://127.0.0.1:${Port}${Path}"
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    for ($w = 0; $w -lt ($Seconds * 2); $w++) {
+        Start-Sleep -Milliseconds 500
+        if (Test-PortFree $Port) { continue }
+        $p = Invoke-HttpProbe $url 3
+        if ($p.Ok) {
+            $sw.Stop()
+            $p | Add-Member -NotePropertyName Ms -NotePropertyValue ([int]$sw.ElapsedMilliseconds) -Force -PassThru
+            return
+        }
+    }
+    $sw.Stop()
+    return [pscustomobject]@{ Ok = $false; Url = $url; Status = 0; Bytes = 0; Error = "หมดเวลา $Seconds วิ แล้วยังตอบไม่ได้"; Ms = [int]$sw.ElapsedMilliseconds }
+}
+
+function Write-HealthLine($h, [string]$Label) {
+    if ($h.Ok) {
+        Write-Ok "health: $Label -> $($h.Status) OK ($($h.Ms) ms)  $($h.Url)"
+    } else {
+        Write-Err2 "health: $Label ไม่ตอบ — $($h.Error)"
+        Write-Info $h.Url
+    }
+}
+
 function Get-PidFile($name) { Join-Path $Script:P.Pids "$name.pid" }
 
 function Test-Running($name) {
@@ -527,16 +697,23 @@ function Start-Db($cfg) {
     $p = Start-Process -FilePath $hit.Daemon -ArgumentList @("--defaults-file=$ini") -PassThru -WindowStyle Hidden
     Set-Pid 'mysql' $p.Id
 
+    # health probe: พอร์ตเปิดแล้วต้อง "ping ผ่าน client ได้จริง" ไม่ใช่แค่รอพอร์ต
+    $healthy = $false
+    $sw = [Diagnostics.Stopwatch]::StartNew()
     for ($w = 0; $w -lt 30; $w++) {
         Start-Sleep -Seconds 1
-        if (-not (Test-PortFree $cfg.dbPort)) { break }
+        if (Test-PortFree $cfg.dbPort) { continue }
+        if (Invoke-DbAdmin $hit @('ping')) { $healthy = $true; break }
     }
-    if (Test-PortFree $cfg.dbPort) {
-        Write-Err2 "MariaDB ไม่ขึ้น — ดู logs\mariadb-error.log"
+    $sw.Stop()
+    if (-not $healthy) {
+        Write-Err2 "MariaDB ไม่ตอบ (รอ $($sw.Elapsed.TotalSeconds.ToString('0.0')) วิ) — ดู logs\mariadb-error.log"
+        Write-Info 'เปิดดู: aptstack logs mysql'
         Clear-Pid 'mysql'
         return $false
     }
-    Write-Ok "MariaDB $($hit.Version) ทำงานแล้ว (port $($cfg.dbPort))  datadir: $datadir"
+    Write-Ok "MariaDB $($hit.Version) healthy (ping OK, $([int]$sw.ElapsedMilliseconds) ms, port $($cfg.dbPort))"
+    Write-Info "datadir: $datadir"
     return $true
 }
 
@@ -572,19 +749,31 @@ function Start-Web($cfg) {
             foreach ($s in $syntax) { Write-Info "$s" }
             return $false
         }
-        $p = Start-Process -FilePath $apache.Httpd -ArgumentList @('-f', $conf) -PassThru -WindowStyle Hidden
-        Set-Pid 'web' $p.Id
-        for ($w = 0; $w -lt 15; $w++) {
-            Start-Sleep -Seconds 1
-            if (-not (Test-PortFree $cfg.httpPort)) { break }
+        # สำคัญ: extension อย่าง curl/intl/sodium พึ่งพา DLL ที่อยู่ในโฟลเดอร์ PHP
+        # (libcrypto, icu*, ...) แต่ Windows หา dependency จาก PATH ของ process ที่โหลด
+        # -> ถ้าไม่ใส่ PATH ของ PHP ลงไป httpd จะโหลด php_curl แล้วฟ้อง "module could not be found"
+        $oldPath = $env:PATH
+        $env:PATH = "$($php.Dir);$oldPath"
+        try {
+            $p = Start-Process -FilePath $apache.Httpd -ArgumentList @('-f', $conf) -PassThru -WindowStyle Hidden
+        } finally {
+            $env:PATH = $oldPath
         }
-        if (Test-PortFree $cfg.httpPort) {
-            Write-Err2 "Apache ไม่ขึ้น — ดู logs\apache-error.log"
+        Set-Pid 'web' $p.Id
+        $h = Wait-Healthy -Port $cfg.httpPort -Path '/' -Seconds 20
+        if (-not $h.Ok) {
+            Write-Err2 "Apache ไม่ตอบ — ดู logs\apache-error.log"
+            Write-Info 'เปิดดู: aptstack logs apache'
             Clear-Pid 'web'
             return $false
         }
-        Write-Ok "Apache $($apache.Version) + mod_php (PHP $($php.Version)) -> http://127.0.0.1:$($cfg.httpPort)"
+        Write-Ok "Apache $($apache.Version) + mod_php (PHP $($php.Version))"
+        Write-HealthLine $h 'http'
         Write-Info "conf: $conf"
+        if ("$($cfg.httpsEnabled)".ToLower() -eq 'true') {
+            $hs = Wait-Healthy -Port $cfg.httpsPort -Path '/' -Seconds 10 -Scheme 'https'
+            Write-HealthLine $hs 'https'
+        }
         return $true
     }
 
@@ -595,16 +784,18 @@ function Start-Web($cfg) {
 
     $p = Start-Process -FilePath $php.Exe -ArgumentList $argList -PassThru -WindowStyle Hidden
     Set-Pid 'web' $p.Id
-    for ($w = 0; $w -lt 15; $w++) {
-        Start-Sleep -Seconds 1
-        if (-not (Test-PortFree $cfg.httpPort)) { break }
-    }
-    if (Test-PortFree $cfg.httpPort) {
-        Write-Err2 "Web server ไม่ขึ้น — ดู logs\php-error.log"
+    $h = Wait-Healthy -Port $cfg.httpPort -Path '/' -Seconds 20
+    if (-not $h.Ok) {
+        Write-Err2 "Web server ไม่ตอบ — ดู logs\php-error.log"
+        Write-Info 'เปิดดู: aptstack logs php'
         Clear-Pid 'web'
         return $false
     }
-    Write-Ok "PHP built-in server (PHP $($php.Version)) -> http://127.0.0.1:$($cfg.httpPort)"
+    Write-Ok "PHP built-in server (PHP $($php.Version))"
+    Write-HealthLine $h 'http'
+    if ("$($cfg.httpsEnabled)".ToLower() -eq 'true') {
+        Write-Warn2 'webMode=builtin ไม่รองรับ HTTPS — ใช้ "webMode": "apache" หรือปิด httpsEnabled'
+    }
     return $true
 }
 
@@ -1170,6 +1361,67 @@ function Cmd-Doctor {
         else { Write-Info 'ยังไม่มี Apache — aptstack add apache <httpd zip> ถ้าต้องใช้ mod_php (production)' }
     }
 
+    # 1c) HTTPS / TLS
+    if ("$($cfg.httpsEnabled)".ToLower() -eq 'true') {
+        if ($wm -ne 'apache') {
+            Write-Warn2 "httpsEnabled=true แต่ webMode=$wm — HTTPS ใช้ได้กับ Apache เท่านั้น (PHP built-in ไม่รองรับ TLS)"
+            $problems++
+        } else {
+            $cert = Resolve-CertPath $cfg.certFile
+            $key = Resolve-CertPath $cfg.keyFile
+            if (-not (Test-Path $cert) -or -not (Test-Path $key)) {
+                Write-Err2 'httpsEnabled=true แต่ไม่พบ cert/key — รัน: aptstack tls init หรือ tls import'; $problems++
+            } else {
+                $ci = Get-CertInfo $cert
+                if (-not $ci) { Write-Err2 'อ่าน cert ไม่ได้'; $problems++ }
+                else {
+                    if ($ci.DaysLeft -lt 0) { Write-Err2 "cert หมดอายุแล้ว ($($ci.NotAfter)) — ต่ออายุ: aptstack tls import"; $problems++ }
+                    elseif ($ci.DaysLeft -lt 14) { Write-Warn2 "cert ใกล้หมดอายุ (เหลือ $($ci.DaysLeft) วัน)" }
+                    else { Write-Ok "cert ใช้ได้ (หมดอายุ $($ci.NotAfter.ToString('yyyy-MM-dd')))" }
+                    # หมายเหตุ: cert PEM ย่อมไม่มี private key ในไฟล์ cert อยู่แล้ว
+                    # ให้เช็ค "ไฟล์ key" แยกต่างหาก (ส่วนคู่กันจริงไหม Apache จะฟ้องตอน start เอง)
+                    if (-not (Test-Path $key)) { Write-Err2 'ไม่พบไฟล์ key'; $problems++ }
+                    else {
+                        $kt = Get-Content $key -Raw -EA SilentlyContinue
+                        if ($kt -match 'PRIVATE KEY') { Write-Ok 'ไฟล์ key มี private key ครบ' }
+                        else { Write-Err2 "ไฟล์ key ไม่ใช่ PEM private key: $key"; $problems++ }
+                    }
+                    if (-not $ci.Trusted) { Write-Warn2 'cert ยังไม่ได้ trust — .NET/browser จะปฏิเสธ (รัน: aptstack tls init ซ้ำ หรือใส่ Trusted Root เอง)' }
+                    else { Write-Ok 'cert อยู่ใน Trusted Root (probe/browser เชื่อถือ)' }
+                }
+            }
+            $hs = Invoke-HttpProbe "https://127.0.0.1:$($cfg.httpsPort)/" 6
+            if ($hs.Ok) { Write-Ok "HTTPS ตอบแล้ว: $($hs.Status) https://127.0.0.1:$($cfg.httpsPort)/" }
+            else { Write-Err2 "HTTPS ไม่ตอบ: $($hs.Error)"; $problems++ }
+        }
+    } else {
+        Write-Info 'HTTPS ปิดอยู่ — เปิดด้วย: aptstack tls init  หรือ  aptstack tls import <cert> <key>'
+    }
+
+    # 1d) virtual hosts
+    $vhFile = Join-Path $Script:P.ConfigDir 'vhosts.json'
+    if (Test-Path $vhFile) {
+        try {
+            $vhItems = @((Get-Content $vhFile -Raw -Encoding UTF8 | ConvertFrom-Json))
+            if ($vhItems.Count -gt 0) {
+                if ($wm -ne 'apache') {
+                    Write-Warn2 "มี vhosts.json แต่ webMode=$wm — virtual host ใช้ได้กับ Apache เท่านั้น"
+                    $problems++
+                } else {
+                    $sum = ($vhItems | ForEach-Object { "$($_.host)->$($_.app)" }) -join ', '
+                    Write-Ok "vhosts: $($vhItems.Count) รายการ  ($sum)"
+                    foreach ($v in $vhItems) {
+                        $d = Join-Path $Script:P.Versions "$($v.app)"
+                        if (-not (Test-Path $d)) { Write-Err2 "vhost $($v.host) -> ไม่พบ versions\$($v.app)"; $problems++ }
+                    }
+                    $hostNames = ($vhItems | ForEach-Object { "$($_.host)" }) -join ' '
+                    Write-Info "ต้องเพิ่มใน hosts file:  127.0.0.1 $hostNames"
+                    Write-Info '(ไม่เช่นนั้นจะเข้าผ่านชื่อ host ไม่ได้ — แต่ probe ด้วย Host header ได้)'
+                }
+            }
+        } catch { Write-Warn2 "vhosts.json อ่านไม่ได้: $($_.Exception.Message)" }
+    } else { Write-Info 'ยังไม่มี virtual host (สร้าง: config\vhosts.json — ดูคู่มือข้อ 6)' }
+
     # 3) config path ไม่ควรชี้ออกจาก bundle (ปัญหาตอน copy ไปเครื่องอื่น)
     $rootNorm = $Root.Replace('/', '\').TrimEnd('\').ToLowerInvariant()
     foreach ($f in @($Script:P.MySqlIni, $Script:P.PhpIni)) {
@@ -1229,7 +1481,12 @@ function Cmd-Doctor {
     }
     if (Test-Path (Join-Path $Root '.git')) {
         $tracked = & git -C $Root ls-files 2>$null
-        $leak = @($tracked | Where-Object { $_ -match '^(db/|stack/|versions/|runtime/|.*\.sql$)' })
+        $leak = @($tracked | Where-Object {
+            $_ -notlike 'examples/*' -and (
+                $_ -match '^(db/|stack/|versions/|runtime/|config/|data/|bin/|dist/|downloads/)' -or
+                ($_ -match '\.sql$' -and $_ -notlike 'examples/*')
+            )
+        })
         if ($leak.Count -gt 0) { Write-Err2 "มีไฟล์ sensitive ถูก track ใน git แล้ว $($leak.Count) ไฟล์: $($leak[0])"; $problems++ }
         else { Write-Ok 'git ไม่ได้ track ข้อมูลจริง / binary / dump' }
     }
@@ -1262,6 +1519,276 @@ function Cmd-Backup($name) {
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $out) -or (Get-Item $out).Length -lt 100) { throw "backup ล้มเหลว (exit $LASTEXITCODE)" }
     Write-Ok ("{0}  ({1:N1} MB)" -f $out, ((Get-Item $out).Length / 1MB))
     Write-Info 'ไฟล์นี้อยู่ใน .gitignore — ห้าม commit ขึ้น repo สาธารณะ'
+}
+
+# ---------------------------------------------------------------- TLS / HTTPS
+function Get-CertInfo([string]$Path) {
+    if (-not $Path -or -not (Test-Path $Path)) { return $null }
+    try {
+        $x = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2((Resolve-Path $Path).Path)
+        return [pscustomobject]@{
+            Subject     = $x.Subject
+            Issuer      = $x.Issuer
+            NotAfter    = $x.NotAfter
+            DaysLeft    = [int][math]::Floor(($x.NotAfter - (Get-Date)).TotalDays)
+            Thumbprint  = $x.Thumbprint
+            HasPrivate  = $x.HasPrivateKey
+            Trusted     = (Test-CertTrust $x.Thumbprint)
+        }
+    } catch { return $null }
+}
+
+function Test-CertTrust([string]$Thumbprint) {
+    if (-not $Thumbprint) { return $false }
+    foreach ($store in @(@('Root', 'CurrentUser'), @('Root', 'LocalMachine'))) {
+        try {
+            $s = New-Object System.Security.Cryptography.X509Certificates.X509Store($store[0], $store[1])
+            $s.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+            $found = $s.Certificates | Where-Object { $_.Thumbprint -eq $Thumbprint }
+            $s.Close()
+            if ($found) { return $true }
+        } catch { }
+    }
+    return $false
+}
+
+function Add-CertTrust([string]$Path) {
+    # ใส่ cert เข้า "Trusted Root" ของผู้ใช้ปัจจุบัน (ไม่ต้องใช้ admin)
+    # เหตุผล: .NET/HttpClient ปฏิเสธ self-signed ด้วย UntrustedRoot
+    #          และ ServerCertificateValidationCallback ใช้ไม่ได้จริงใน PS 5.1 บาง environment
+    #          -> ใส่ store จึงเป็นวิธีที่ work ทั้งกับ probe และกับ browser ของผู้ใช้คนนี้
+    try {
+        $x = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2((Resolve-Path $Path).Path)
+        $s = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'CurrentUser')
+        $s.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+        $s.Add($x)
+        $s.Close()
+        return $true
+    } catch {
+        Write-Warn2 "เพิ่ม cert เข้า Trusted Root ไม่สำเร็จ: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Restart-WebOnly {
+    if (Test-Running 'web') { Stop-Web; Start-Sleep -Seconds 1; Start-Web (Get-Config) | Out-Null }
+    else { Write-Info 'web ยังไม่รัน — ค่อยเปิดด้วย: aptstack start' }
+}
+
+function Cmd-Tls($action, $a, $b) {
+    $cfg = Get-Config
+    $act = if ($action) { "$action".ToLower() } else { 'status' }
+
+    switch ($act) {
+        'status' {
+            Write-Head 'HTTPS / TLS'
+            $on = "$($cfg.httpsEnabled)".ToLower() -eq 'true'
+            Write-Host "  httpsEnabled : $($cfg.httpsEnabled)" -ForegroundColor $(if ($on) { 'Green' } else { 'Gray' })
+            Write-Host "  httpsPort    : $($cfg.httpsPort)"
+            Write-Host "  serverName   : $($cfg.serverName)"
+            $cert = Resolve-CertPath $cfg.certFile
+            $key = Resolve-CertPath $cfg.keyFile
+            Write-Host "  certFile     : $(if ($cert) { $cert } else { '(ยังไม่ตั้ง)' })"
+            Write-Host "  keyFile      : $(if ($key) { $key } else { '(ยังไม่ตั้ง)' })"
+            $ci = Get-CertInfo $cert
+            if ($ci) {
+                $col = if ($ci.DaysLeft -lt 14) { 'Yellow' } else { 'Gray' }
+                Write-Host ''
+                Write-Host "  Subject : $($ci.Subject)" -ForegroundColor White
+                Write-Host "  Issuer  : $($ci.Issuer)" -ForegroundColor Gray
+                Write-Host ("  หมดอายุ : {0:yyyy-MM-dd}  (เหลือ {1} วัน)" -f $ci.NotAfter, $ci.DaysLeft) -ForegroundColor $col
+                # cert PEM ย่อมไม่มี private key ในไฟล์ cert -> เช็ค "ไฟล์ key" แยก
+                $keyHas = (Test-Path $key) -and ((Get-Content $key -Raw -EA SilentlyContinue) -match 'PRIVATE KEY')
+                Write-Host "  แบบกุญแจ: $(if ($keyHas) { 'ไฟล์ key มี private key ครบ (Apache ใช้ได้)' } else { 'ไม่พบ private key ในไฟล์ key — Apache จะ start ไม่ขึ้น' })" -ForegroundColor $(if ($keyHas) { 'Green' } else { 'Red' })
+                Write-Host "  Trust    : $(if ($ci.Trusted) { 'อยู่ใน Trusted Root — browser/.NET เชื่อถือแล้ว' } else { 'ยังไม่ได้ trust (self-signed จะถูกปฏิเสธโดย .NET/browser)' })" -ForegroundColor $(if ($ci.Trusted) { 'Green' } else { 'Yellow' })
+                if ($ci.DaysLeft -lt 14) { Write-Warn2 'cert ใกล้หมดอายุ — ต่ออายุแล้วรัน: aptstack tls import <cert> <key>' }
+            } elseif ($cert) { Write-Warn2 'อ่านไฟล์ cert ไม่ได้ (รูปแบบ/encoding ผิด? ต้องเป็น PEM)' }
+
+            $wm = Resolve-WebMode $cfg (Resolve-Php $cfg.php) (Resolve-Apache $cfg.apache)
+            if ($on) {
+                if ($wm -ne 'apache') { Write-Warn2 "HTTPS ใช้ได้กับ webMode=apache เท่านั้น (ตอนนี้ = $wm)" }
+                else {
+                    $h = Invoke-HttpProbe "https://127.0.0.1:$($cfg.httpsPort)/" 5
+                    if ($h.Ok) { Write-Ok "HTTPS ตอบแล้ว: $($h.Status)  https://127.0.0.1:$($cfg.httpsPort)/" }
+                    else { Write-Warn2 "HTTPS ยังไม่ตอบ: $($h.Error)" ; Write-Info 'ถ้าเพิ่งเปิด ให้รัน: aptstack restart แล้วดู aptstack logs apache' }
+                }
+            } else {
+                Write-Info 'ยังไม่เปิด — เปิดด้วย:  aptstack tls init   หรือ  aptstack tls import <cert> <key>'
+            }
+            Write-Host ''
+            Write-Info 'วิธีใช้: tls init (self-signed/mkcert) · tls import <cert.pem> <key.pem> (cert จริง) · tls off'
+        }
+
+        'off' {
+            $cfg.httpsEnabled = 'false'
+            Save-Config $cfg
+            Write-Ok 'ปิด HTTPS แล้ว (httpsEnabled=false)'
+            Restart-WebOnly
+        }
+
+        'on' {
+            $cert = Resolve-CertPath $cfg.certFile
+            $key = Resolve-CertPath $cfg.keyFile
+            if (-not (Test-Path $cert) -or -not (Test-Path $key)) { throw 'ยังไม่มี cert/key — รันก่อน: aptstack tls init หรือ tls import' }
+            $cfg.httpsEnabled = 'true'
+            Save-Config $cfg
+            Write-Ok "เปิด HTTPS ที่ port $($cfg.httpsPort)"
+            Restart-WebOnly
+        }
+
+        'init' {
+            # สร้าง self-signed cert ด้วย openssl ที่มากับ Apache (ไม่ต้องติดตั้งอะไรเพิ่ม)
+            # ถ้ามี mkcert อยู่แล้วจะใช้ mkcert แทน (ได้ cert ที่ browser เชื่อถือในเครื่องตัวเอง)
+            Ensure-Dirs
+            $domains = @('localhost')
+            if ($a) { foreach ($d in ("$a" -split '[,\s]+')) { if ($d -and ($domains -notcontains $d)) { $domains += $d } } }
+            # ดึง host จาก vhosts.json เข้า SAN ด้วย — ไม่งั้น https://demo.local จะถูกปฏิเสธ
+            # ด้วย RemoteCertificateNameMismatch (cert ไม่ครอบคลุมชื่อนั้น)
+            $vhFile = Join-Path $Script:P.ConfigDir 'vhosts.json'
+            if (Test-Path $vhFile) {
+                try {
+                    foreach ($v in @((Get-Content $vhFile -Raw -Encoding UTF8 | ConvertFrom-Json))) {
+                        $h = "$($v.host)"
+                        if ($h -and ($domains -notcontains $h)) { $domains += $h }
+                    }
+                } catch { }
+            }
+            $san = (@("DNS:$($domains -join ',DNS:')") + @('IP:127.0.0.1')) -join ','
+            Write-Info "SAN ที่จะใส่: $($domains -join ', ')"
+
+            $certOut = Join-Path $Script:P.Certs 'aptstack-cert.pem'
+            $keyOut = Join-Path $Script:P.Certs 'aptstack-key.pem'
+
+            $mkcert = Get-Command mkcert -ErrorAction SilentlyContinue
+            if ($mkcert) {
+                Write-Head 'สร้าง cert ด้วย mkcert (browser เชื่อถือในเครื่องนี้)'
+                & mkcert.exe -install 2>&1 | Out-Null
+                & mkcert.exe -cert-file "$certOut" -key-file "$keyOut" @($domains) 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) { Write-Warn2 'mkcert ไม่สำเร็จ — ลอง openssl แทน'; $mkcert = $null }
+            }
+            if (-not $mkcert) {
+                $apache = Resolve-Apache $cfg.apache
+                $openssl = $null
+                if ($apache) { $o = Join-Path $apache.Dir 'bin\openssl.exe'; if (Test-Path $o) { $openssl = $o } }
+                if (-not $openssl) { throw "ไม่พบ openssl.exe ใน Apache — ติดตั้ง mkcert หรือใช้: aptstack tls import <cert> <key>" }
+
+                Write-Head "สร้าง self-signed cert ด้วย openssl (อายุ 365 วัน)"
+                Write-Info "CN=$($domains[0])  SAN=$san"
+                $oargs = @('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '365',
+                           '-keyout', "$keyOut", '-out', "$certOut",
+                           '-subj', "/CN=$($domains[0])",
+                           '-addext', "subjectAltName=$san",
+                           '-addext', 'basicConstraints=critical,CA:FALSE',
+                           '-addext', 'keyUsage=critical,digitalSignature,keyEncipherment',
+                           '-addext', 'extendedKeyUsage=serverAuth')
+                # openssl ของ Apache ค้น config ที่ path compile-time (เช่น C:\Apache24\conf)
+                # -> ต้องชี้ OPENSSL_CONF ไปที่ openssl.cnf ของ bundle ไม่งั้น error ทันที
+                $oldConf = $env:OPENSSL_CONF
+                $oCnf = Join-Path $apache.Dir 'conf\openssl.cnf'
+                if (Test-Path $oCnf) { $env:OPENSSL_CONF = $oCnf }
+                $old = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                try { & $openssl @oargs 2>&1 | Out-Null } catch { }
+                $code = $LASTEXITCODE
+                $ErrorActionPreference = $old
+                $env:OPENSSL_CONF = $oldConf
+                if ($code -ne 0 -or -not (Test-Path $certOut)) { throw "openssl สร้าง cert ไม่สำเร็จ (exit $code) — ดู templates หรือใช้ mkcert" }
+            }
+
+            $cfg.certFile = 'config\certs\aptstack-cert.pem'
+            $cfg.keyFile = 'config\certs\aptstack-key.pem'
+            $cfg.httpsEnabled = 'true'
+            if ($cfg.serverName) { $cfg.serverName = $domains[0] }
+            Save-Config $cfg
+
+            $ci = Get-CertInfo $certOut
+            Write-Ok "สร้าง cert แล้ว: $($ci.Subject)"
+            if ($ci) { Write-Info ("หมดอายุ {0:yyyy-MM-dd} (เหลือ {1} วัน)" -f $ci.NotAfter, $ci.DaysLeft) }
+            Write-Info "cert: $certOut"
+            Write-Info "key : $keyOut"
+            # ต้อง "เชื่อถือ" ด้วย ไม่งั้น .NET/browser จะปฏิเสธ self-signed (UntrustedRoot)
+            # และการปลดด้วย ServerCertificateValidationCallback ใช้ไม่ได้จริงใน PS 5.1
+            if (-not $ci.Trusted) {
+                if (Add-CertTrust $certOut) { Write-Ok 'ใส่ cert เข้า Trusted Root (CurrentUser) แล้ว — probe/browser เชื่อถือได้ทันที' }
+                else { Write-Warn2 'ยังไม่ได้ trust cert — health probe https จะฟ้อง UntrustedRoot' }
+            } else { Write-Ok 'cert อยู่ใน Trusted Root แล้ว' }
+            Write-Warn2 'self-signed = ใช้ทดสอบ/ภายในเครื่อง ถ้าเปิดออกอินเทอร์เน็ตให้ใช้ cert จริง'
+            Write-Info 'ได้ cert จริง (Let''s Encrypt / ผู้ให้บริการ) -> aptstack tls import <cert.pem> <key.pem>'
+            Restart-WebOnly
+            Write-Info "ลองเปิด: https://127.0.0.1:$($cfg.httpsPort)/"
+        }
+
+        'import' {
+            if (-not $a -or -not $b) { throw 'ใช้: aptstack tls import <cert.pem> <key.pem>' }
+            if (-not (Test-Path $a)) { throw "ไม่พบไฟล์ cert: $a" }
+            if (-not (Test-Path $b)) { throw "ไม่พบไฟล์ key: $b" }
+            Ensure-Dirs
+            $ci = Get-CertInfo $a
+            if (-not $ci) { throw 'อ่าน cert ไม่ได้ — ต้องเป็น PEM (.pem/.crt) ไม่ใช่ .pfx' }
+            if (-not $ci.HasPrivate) {
+                # cert กับ key แยกไฟล์: ตรวจว่า key ใส่ได้จริงโดยลอง pair กัน
+                Write-Info 'ตรวจว่า cert/key match กัน...'
+            }
+            $certDst = Join-Path $Script:P.Certs 'aptstack-cert.pem'
+            $keyDst = Join-Path $Script:P.Certs 'aptstack-key.pem'
+            Copy-Item $a $certDst -Force
+            Copy-Item $b $keyDst -Force
+
+            $cfg.certFile = 'config\certs\aptstack-cert.pem'
+            $cfg.keyFile = 'config\certs\aptstack-key.pem'
+            $cfg.httpsEnabled = 'true'
+            Save-Config $cfg
+
+            Write-Ok 'นำเข้า cert จริงแล้ว'
+            Write-Info "Subject : $($ci.Subject)"
+            Write-Info ("หมดอายุ : {0:yyyy-MM-dd} (เหลือ {1} วัน)" -f $ci.NotAfter, $ci.DaysLeft)
+            if ($ci.DaysLeft -lt 14) { Write-Warn2 'cert ใกล้/หมดอายุ — อย่าลืมต่ออายุแล้ว import ใหม่' }
+            Restart-WebOnly
+            Write-Info "ลองเปิด: https://127.0.0.1:$($cfg.httpsPort)/"
+        }
+
+        default { throw "ไม่รู้จัก '$act' — ใช้ได้: status | init [domain,..] | import <cert> <key> | on | off" }
+    }
+}
+
+function Cmd-Logs($kind, $n) {
+    if (-not $kind) { $kind = 'all' }
+    if ("$n" -match '^\d+$') { $n = [int]$n } else { $n = 50 }
+
+    $names = switch ("$kind".ToLower()) {
+        'apache' { @('apache-error.log', 'apache-access.log') }
+        'httpd'  { @('apache-error.log', 'apache-access.log') }
+        'mysql'  { @('mariadb-error.log') }
+        'maria'  { @('mariadb-error.log') }
+        'db'     { @('mariadb-error.log') }
+        'php'    { @('php-error.log') }
+        'all'    { @('apache-error.log', 'mariadb-error.log', 'php-error.log') }
+        default  { throw "ไม่รู้จัก log '$kind' — ใช้ได้: apache | mysql | php | all" }
+    }
+
+    Write-Head "logs ($n บรรทัดท้าย) · $kind"
+    foreach ($fn in $names) {
+        $path = Join-Path $Script:P.Logs $fn
+        Write-Host "  --- $fn ---" -ForegroundColor White
+        if (-not (Test-Path $path)) {
+            Write-Warn2 "ยังไม่มีไฟล์นี้: $path"
+            Write-Info 'ปกติจะถูกสร้างเมื่อมี error ตอน start/รัน'
+            Write-Host ''
+            continue
+        }
+        $item = Get-Item $path
+        Write-Info ("{0:N0} bytes · เปลี่ยนล่าสุด {1}" -f $item.Length, $item.LastWriteTime)
+        $lines = @(Get-Content $path -Tail $n -ErrorAction SilentlyContinue)
+        if ($lines.Count -eq 0) { Write-Info '(ไฟล์ว่าง)'; Write-Host ''; continue }
+        foreach ($l in $lines) {
+            $c = 'Gray'
+            if ("$l" -match '(?i)\bfatal\b|critical|access denied|failed|cannot|refused|Segmentation') { $c = 'Red' }
+            elseif ("$l" -match '(?i)\bwarn|deprecated|notice') { $c = 'Yellow' }
+            Write-Host "  $l" -ForegroundColor $c
+        }
+        Write-Host ''
+    }
+    Write-Info "ทั้งหมดอยู่ที่: $($Script:P.Logs)"
 }
 
 # ---------------------------------------------------------------- init / help
@@ -1385,6 +1912,14 @@ function Cmd-Help {
   aptstack status
   aptstack backup [file.sql]       dump ทุก database ไป data\dumps\
   aptstack seed                    import database ตัวอย่าง (aptstack_demo)
+  aptstack logs <apache|mysql|php> ดู log ท้ายไฟล์ (ตัวเลข = กี่บรรทัด, default 50)
+  aptstack logs all                ดู log error ทุกตัว
+
+  ── HTTPS / TLS ───────────────────────────────────────
+  aptstack tls status               ดูสถานะ + วันหมดอายุ cert
+  aptstack tls init [domain,..]     สร้าง self-signed cert (openssl/mkcert) แล้วเปิดให้เลย
+  aptstack tls import <c.pem> <k.pem>  ใช้ SSL cert จริง (Let's Encrypt/พาณิชย์)
+  aptstack tls off                  ปิด HTTPS
 
   ── Windows Service ──────────────────────────────────
   aptstack service install         ติดตั้ง service (ต้อง Run as admin)
@@ -1437,6 +1972,9 @@ switch ($Command.ToLower()) {
     'doctor'      { Cmd-Doctor }
     'backup'      { Cmd-Backup $Action }
     'seed'        { Cmd-Seed }
+    'logs'        { Cmd-Logs $Action $Value }
+    'tls'         { Cmd-Tls $Action $Value $Extra }
+    'https'       { Cmd-Tls $Action $Value $Extra }
     'service'     { & (Join-Path $Root 'service.ps1') -Action $Action }
     'service-run' { Cmd-ServiceRun }
     'help'        { Cmd-Help }

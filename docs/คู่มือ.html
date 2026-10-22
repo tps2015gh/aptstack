@@ -62,7 +62,7 @@
 <div class="nav">
   <b>เนื้อหา:</b>
   <a href="#s0">คืออะไร</a><a href="#s1">เริ่มใช้</a><a href="#s2">คำสั่ง</a>
-  <a href="#s3">สลับเวอร์ชัน</a><a href="#s4">สลับ PHP</a><a href="#s4b">สลับ Apache/MySQL</a><a href="#s5">XAMPP</a>
+  <a href="#s3">สลับเวอร์ชัน</a><a href="#s4">สลับ PHP</a><a href="#s4b">สลับ Apache/MySQL</a><a href="#s5">XAMPP</a><a href="#s5a">HTTPS</a><a href="#s5b">vhosts</a>
   <a href="#s6">Service</a><a href="#s7">ย้าย server</a><a href="#s8">แก้ปัญหา</a>
   <a href="#s9">ความปลอดภัย</a><a href="#s10">โครงสร้าง</a>
 </div>
@@ -126,6 +126,13 @@ aptstack status                  รันอยู่ไหม ใช้ versio
 aptstack doctor                  ตรวจสุขภาพ + ช่องโหว่
 aptstack backup [ชื่อ.sql]       dump ทุก database -&gt; data\dumps\
 aptstack seed                    import database ตัวอย่าง (aptstack_demo)
+aptstack logs &lt;apache|mysql|php&gt; ดู log ท้ายไฟล์ (ตัวเลข = กี่บรรทัด)
+aptstack logs all                ดู log error ทุกตัว
+
+aptstack tls status               ดูสถานะ HTTPS + cert + วันหมดอายุ
+aptstack tls init [domain,..]     สร้าง self-signed + เปิด HTTPS + trust
+aptstack tls import &lt;c&gt; &lt;k&gt;       ใช้ SSL cert จริง (Let's Encrypt/พาณิชย์)
+aptstack tls off                  ปิด HTTPS
 
 aptstack service install         ลง Windows Service (ต้อง admin)
 aptstack service uninstall       ถอน
@@ -225,6 +232,52 @@ aptstack use mysql  11.4.13      <span style="color:#6b7280">:: เลือก 
 </table>
 
 <div class="box warn">⚠️ ถ้า XAMPP เปิด port 3306 อยู่ อย่าใช้ <code>dbMode:internal</code> กับ 3306 — ชนกันแน่นอน</div>
+
+<h2 id="s5a">5a. HTTPS / TLS (self-signed + SSL cert จริง)</h2>
+<p><b>ใช้ได้กับ <code>webMode=apache</code> เท่านั้น</b> (PHP built-in ไม่รองรับ TLS)</p>
+
+<h3>ทางที่ 1 — ให้ aptstack สร้าง cert (ทดสอบ/ภายในเครื่อง)</h3>
+<pre><code>aptstack tls init                    <span style="color:#6b7280">:: สร้าง + เปิด HTTPS + trust ให้เลย</span>
+aptstack tls init mysite.local,api.local
+aptstack tls status                  <span style="color:#6b7280">:: ดู cert + หมดอายุ + trust หรือยัง</span></code></pre>
+<ul>
+<li>ใช้ <code>openssl.exe</code> ที่<b>มากับ Apache อยู่แล้ว</b> → ไม่ต้องติดตั้งอะไรเพิ่ม
+  (ถ้ามี <code>mkcert</code> จะใช้ mkcert แทน)</li>
+<li>อายุ 365 วัน · SAN มี <code>localhost</code>, <code>IP:127.0.0.1</code>
+  และทุก host ใน <code>vhosts.json</code></li>
+<li><b>สำคัญ:</b> จะ<strong>ใส่ cert เข้า Trusted Root ของผู้ใช้ให้ด้วย</strong>
+  เพราะถ้าไม่ trust → .NET/browser ปฏิเสธ <code>UntrustedRoot</code>
+  (การปลดด้วย <code>ServerCertificateValidationCallback</code> ใช้ไม่ได้จริงบน PS 5.1 — ทดสอบแล้ว)</li>
+</ul>
+
+<h3>ทางที่ 2 — ใช้ SSL cert จริง</h3>
+<pre><code>aptstack tls import C:\certs\fullchain.pem C:\certs\privkey.pem
+aptstack tls off</code></pre>
+<ul>
+<li>คัดลอกเข้า <code>config\certs\</code> แล้วเปิด HTTPS ให้เอง + restart</li>
+<li>แสดง subject / หมดอายุ / เตือนถ้าเหลือ &lt; 14 วัน</li>
+<li><b>cert จริงไม่ต้องเข้า Trusted Root</b> (CA เชื่อถืออยู่แล้ว)</li>
+<li>ต่ออายุ → <code>tls import</code> ใหม่</li>
+</ul>
+<div class="box">เปิดดู <code>https://127.0.0.1:8443/</code> —
+<code>start</code> จะ health probe HTTPS ให้ และ <code>doctor</code> จะรายงานถ้า fail</div>
+
+<h2 id="s5b">5b. Virtual hosts (config\vhosts.json)</h2>
+<pre><code>[
+  { "host": "demo.local", "app": "hello-1.0.0" },
+  { "host": "apt.local",  "app": "1.1.0" },
+  { "host": "old.local",  "app": "1.0.0", "https": false }
+]</code></pre>
+<pre><code>aptstack restart      <span style="color:#6b7280">:: generate config\httpd.conf ใหม่ (httpd -t ให้เอง)</span>
+aptstack doctor       <span style="color:#6b7280">:: ตรวจนับ vhost + ตรวจว่า app มีอยู่จริง</span></code></pre>
+<p><b>ต้องเพิ่มใน hosts file</b> (<code>C:\Windows\System32\drivers\etc\hosts</code>):</p>
+<pre><code>127.0.0.1   demo.local apt.local</code></pre>
+<div class="box warn">
+<b>ข้อควรระวัง:</b> พอเพิ่ม <code>&lt;VirtualHost&gt;</code> ตัวแรกของ port นั้น Apache จะใช้
+<b>vhost ตัวแรกเป็น default</b> — aptstack ใส่ default vhost ชี้ <code>www\</code> ไว้ก่อนเสมอ
+จึงไม่ทำให้ <code>http://127.0.0.1:8077/</code> เพี้ยน (ทดสอบแล้ว แยกถูกทั้ง default/demo/apt)<br>
+ข้อจำกัด: ใช้ได้กับ <code>webMode=apache</code> เท่านั้น
+</div>
 
 <h2 id="s6">6. Windows Service</h2>
 <pre><code><span style="color:#6b7280">:: เปิด cmd ด้วยสิทธิ์ administrator</span>

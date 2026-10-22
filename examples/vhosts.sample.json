@@ -1,0 +1,5 @@
+[
+  { "host": "demo.local", "app": "hello-1.0.0" },
+  { "host": "apt.local",  "app": "1.1.0" },
+  { "host": "old.local",  "app": "1.0.0", "https": false }
+]
