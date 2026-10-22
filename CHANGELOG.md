@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.1.0 — 2026-10-22
+
+เพิ่มฟีเจอร์ตาม `prompt02.txt` (รายการที่ devstack ยังไม่มี)
+
+### Added
+
+- **HTTPS / TLS** — `aptstack tls status | init | import | on | off`
+  - `tls init` สร้าง self-signed cert ด้วย `openssl.exe` ที่มากับ Apache
+    (ใช้ `mkcert` ถ้ามี) อายุ 365 วัน + SAN อัตโนมัติจาก `vhosts.json`
+  - **ใส่ cert เข้า Trusted Root ของผู้ใช้ให้** → .NET/browser เชื่อถือ
+    (การปลดด้วย `ServerCertificateValidationCallback` ใช้ไม่ได้จริงบน PS 5.1 — ทดสอบแล้ว)
+  - `tls import <cert.pem> <key.pem>` รับ **SSL cert จริง** (Let's Encrypt / พาณิชย์)
+  - `doctor` เช็ค cert หมดอายุ / private key / trust / probe HTTPS จริง
+- **Virtual hosts** — `config\vhosts.json` → generate `<VirtualHost>` (HTTP + HTTPS)
+  - ใส่ default vhost ไว้ก่อนเสมอ จึงไม่ทำให้ `http://127.0.0.1:port/` เพี้ยน
+  - `doctor` ตรวจนับ + ตรวจว่า app มีอยู่จริง + บอกบรรทัด hosts file
+- **`aptstack logs <apache|mysql|php|all> [จำนวนบรรทัด]`** — ดูท้ายไฟล์ + ไฮไลต์ error
+- **health probe หลัง start** — แทนการรอแบบ blind:
+  HTTP/HTTPS GET จริง (รายงาน 200 + ms) และ `ping` database ผ่าน client
+- `examples/vhosts.sample.json`
+
+### Fixed
+
+- 🔴 **extension โหลดไม่ได้ใต้ Apache** (`curl`/`intl`/`sodium`/`sqlite3` …)
+  เพราะ Windows หา dependency DLL จาก PATH ของ process ที่โหลด → prepend PATH ของ PHP
+  (ตรวจแล้ว extension ครบ 12/12 ใต้ `apache2handler`)
+- `openssl.exe` ค้น config ที่ path compile-time (`C:\Apache24\conf`) → ชี้ `OPENSSL_CONF`
+- `SSLSessionCache shmcb:` build นี้ฟ้อง `cache size not numerical` ทุกรูปแบบ → ตัดออก
+- `doctor` false positives: เช็ค private key ผิด, flag `examples/seed.sql`, แสดงรายการ vhost ว่าง
+- `push-github.ps1` สะดุดเมื่อ git เขียน progress ลง stderr (`EAP=Stop`)
+
+### Docs
+
+- `docs/คู่มือ.md` + `.html`: ข้อ 5a (HTTPS) และ 5b (vhosts), คำสั่ง logs/tls
+- `README.md` (EN), `README-TH.md`, `SECURITY.md` (ข้อจำกัด HTTPS เปลี่ยนแล้ว)
+
+---
+
 ## 1.0.0 — 2026-10-22
 
 First public release. Portable PHP / MariaDB stack for Windows with

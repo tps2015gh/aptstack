@@ -28,6 +28,7 @@ cd /d D:\aptstack
 aptstack list            :: what's installed
 aptstack start           :: MariaDB + web
 aptstack doctor          :: security / health check
+aptstack seed            :: load sample database (proves DB connectivity)
 ```
 
 Open <http://127.0.0.1:8077/app/>
@@ -94,18 +95,51 @@ are ignored on purpose (this repo is public).
 | `aptstack status` | running? which version? |
 | `aptstack doctor` | security + health check |
 | `aptstack backup [file]` | dump all databases → `data\dumps\` |
+| `aptstack seed` | import sample database (`aptstack_demo`) |
+| `aptstack logs <apache\|mysql\|php\|all> [n]` | tail log files, highlight errors |
+| `aptstack tls status\|init\|import\|off` | HTTPS — self-signed **or real cert** |
 | `aptstack service install` | Windows Service (admin) |
 
 ## Ports
 
 | Service | Default | Change in |
 |---|---|---|
-| Web (PHP built-in server) | `8077` | `config\stack.json` → `httpPort` |
+| Web (Apache mod_php / PHP built-in) | `8077` | `config\stack.json` → `httpPort` |
+| HTTPS (Apache only) | `8443` | `config\stack.json` → `httpsPort` |
 | MariaDB | `3307` | `config\stack.json` → `dbPort` |
 
 Want to keep using **XAMPP's MySQL** instead of the bundled MariaDB?
 Set `"dbMode": "external"` and `"dbPort": 3306` in `config\stack.json` — aptstack will neither
 start nor stop that MySQL (see [คู่มือ.md](docs/คู่มือ.md)).
+
+## HTTPS & virtual hosts
+
+```cmd
+aptstack tls init                              :: self-signed cert + enable HTTPS + trust it
+aptstack tls import fullchain.pem privkey.pem  :: real certificate (Let's Encrypt / commercial)
+aptstack tls status | tls off
+```
+
+- `tls init` uses the **`openssl.exe` that ships with Apache** (falls back to `mkcert` if installed),
+  generates a 365-day cert whose SAN includes every host in `vhosts.json`,
+  then **adds it to the user's Trusted Root** — otherwise .NET/browser reject it with `UntrustedRoot`.
+  (Disabling validation via `ServerCertificateValidationCallback` does *not* work on PS 5.1 — tested.)
+- HTTPS only works with `webMode=apache`.
+
+**Virtual hosts** — `config\vhosts.json`:
+
+```json
+[ { "host": "demo.local", "app": "hello-1.0.0" },
+  { "host": "apt.local",  "app": "1.1.0" } ]
+```
+
+then `aptstack restart` (regenerates `config\httpd.conf`, runs `httpd -t` for you).
+Add `127.0.0.1 demo.local apt.local` to your hosts file.
+A **default vhost is always emitted first**, so `http://127.0.0.1:8077/` keeps working.
+Sample: [examples/vhosts.sample.json](examples/vhosts.sample.json).
+
+After every `start` aptstack runs **real health probes** (HTTP/HTTPS GET + database ping)
+instead of blind sleeps, e.g. `health: https -> 200 OK (660 ms)`.
 
 ## Security
 

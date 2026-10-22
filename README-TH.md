@@ -124,12 +124,15 @@ aptstack\
 │   └── my.ini.tpl              template ของ MariaDB
 │
 ├── config\                   ⚠️ config อยู่ที่เดียว (ห้าม commit)
-│   ├── stack.json               ★ เลือก version + port ที่นี่ที่เดียว
-│   ├── php.ini, my.ini          generate ใหม่ทุกครั้งที่ start (ห้ามแก้)
+│   ├── stack.json               ★ เลือก version + port + httpsEnabled
+│   ├── vhosts.json              ★ virtual host หลายชื่อ host/หลายแอป
+│   ├── certs\                   ★ cert/key TLS (aptstack tls init | tls import)
+│   ├── php.ini, my.ini, httpd.conf  generate ใหม่ทุกครั้งที่ start (ห้ามแก้)
 │   └── pids\, tmp\, stop.flag
 │
 ├── stack\                    binary (ห้าม commit)
 │   ├── php\8.3.36\, php\8.1.34\
+│   ├── apache\httpd-2.4.69\
 │   └── mysql\mariadb-11.4.13-winx64\
 │
 ├── versions\                 โค้ดแอป (ห้าม commit)  versions\1.0.0\, 1.1.0\

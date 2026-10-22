@@ -105,12 +105,18 @@ $hasRemote = & git -C $Root remote | Select-String -Pattern '^origin$' -Quiet
 if ($hasRemote) { & git -C $Root remote set-url origin $urlAuth }
 else { & git -C $Root remote add origin $urlAuth }
 
+# git เขียน progress ลง stderr -> ถ้า EAP=Stop จะโยน NativeCommandError แล้ว script สะดุด
+# ทั้งที่ push สำเร็จ ("Everything up-to-date" ก็เป็น stderr) จึงต้องกด EAP เป็น Continue ชั่วคราว
+$oldEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 & git -C $Root push -u origin HEAD --force-with-lease 2>&1 | ForEach-Object { Info "$_" }
-if ($LASTEXITCODE -ne 0) { Err "push ล้มเหลว (exit $LASTEXITCODE)"; exit 1 }
-Ok 'push branch หลักแล้ว'
-
+$pushCode = $LASTEXITCODE
 & git -C $Root push origin --tags 2>&1 | ForEach-Object { Info "$_" }
-Ok 'push tags แล้ว'
+$tagCode = $LASTEXITCODE
+$ErrorActionPreference = $oldEap
+if ($pushCode -ne 0) { Err "push ล้มเหลว (exit $pushCode)"; exit 1 }
+Ok 'push branch หลักแล้ว'
+if ($tagCode -ne 0) { Write-Warning "push tags exit=$tagCode" } else { Ok 'push tags แล้ว' }
 
 # สำคัญ: เอา token ออกจาก .git/config ทันที
 & git -C $Root remote set-url origin $urlClean
