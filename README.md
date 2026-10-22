@@ -7,7 +7,8 @@ Inspired by [Laragon](https://laragon.org/) / XAMPP, and by the `devstack` tool 
 devstack does not have: **app-version switching** and **Windows Service install**.
 
 > **ภาษาไทย:** [README-TH.md](README-TH.md) · คู่มือใช้งาน [docs/คู่มือ.md](docs/คู่มือ.md) ·
-> [docs/คู่มือ.html](docs/คู่มือ.html) · เทียบกับ devstack [docs/เปรียบเทียบ-devstack.md](docs/เปรียบเทียบ-devstack.md)
+> [docs/คู่มือ.html](docs/คู่มือ.html) · เทียบกับ devstack [docs/เปรียบเทียบ-devstack.md](docs/เปรียบเทียบ-devstack.md) ·
+> credits + ความเห็นต่อโปรเจกต์ [docs/ABOUT-TH.md](docs/ABOUT-TH.md)
 
 ---
 
