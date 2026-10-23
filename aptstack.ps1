@@ -886,6 +886,38 @@ function Stop-Db {
     Stop-ByPort -port $cfg.dbPort -label 'MariaDB'
 }
 
+function Sync-AppAliases {
+    # สร้าง junction ใน www\<ชื่อapp> ให้ทุกตัวที่ติดตั้งอยู่
+    # -> เข้าได้หลาย path พร้อมกันบน listener เดียว เช่น /app/ /todo-app/ /sysinfo-app/
+    # (ไม่แตะ www\<appAlias> ตัวหลัก · ไม่สร้างซ้ำ · ไม่ลบของที่ไม่ใช่ junction)
+    $cfg = Get-Config
+    Ensure-Dirs
+    $main = "$($cfg.appAlias)"
+    # 1) เก็บกวาด junction ที่ชี้ไปโฟลเดอร์ที่ถูกลบแล้ว (ไม่แตะตัวหลัก/ของที่ไม่ใช่ junction)
+    foreach ($i in @(Get-ChildItem $Script:P.Www -Force -EA SilentlyContinue)) {
+        if (-not ($i.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
+        if ($i.Name -eq $main) { continue }
+        if (-not (Test-Path -LiteralPath $i.FullName)) {
+            [void][IO.Directory]::Delete($i.FullName, $false)
+        }
+    }
+    # 2) สร้าง junction ให้ทุก app ที่ยังไม่มี path
+    foreach ($a in @(Get-AppVersions)) {
+        $safe = "$($a.Name)" -replace '[^\w.\-]', '-'
+        if (-not $safe -or $safe -eq $main) { continue }
+        $link = Join-Path $Script:P.Www $safe
+        $tgt = $a.Dir
+        $i = Get-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue
+        if ($i) {
+            if ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                if ("$($i.Target)" -eq $tgt) { continue }
+                [void][IO.Directory]::Delete($link, $false)
+            } else { continue }
+        }
+        New-Item -ItemType Junction -Path $link -Target $tgt | Out-Null
+    }
+}
+
 function Cmd-Start {
     Ensure-Dirs
     $cfg = Get-Config
@@ -897,6 +929,7 @@ function Cmd-Start {
         Write-Warn2 "ไม่พบ www\$($cfg.appAlias) — รัน: aptstack use <version>"
     }
     Start-Db $cfg | Out-Null
+    Sync-AppAliases            # ทุก app มี path ของตัวเอง เช่น /todo-app/ /sysinfo-app/
     Start-Web $cfg | Out-Null
     Cmd-Summary
 }
@@ -1273,8 +1306,10 @@ function Cmd-Add($kind, $source, $extra) {
                 Expand-AndFlatten $src $dest
             }
             Set-AppMeta $dest $null $null
+            Sync-AppAliases
             Set-SourceMeta $dest $kind $origSource
             Write-Ok "ติดตั้ง app $name เรียบร้อย"
+            Write-Info "เข้าได้หลาย path พร้อมกัน:  /$((Get-Config).appAlias)/ และ /$name/"
             Write-Info "เปิดใช้: aptstack use $name"
         }
         'php' {
@@ -2008,8 +2043,10 @@ function Cmd-Samples {
         }
     }
     Write-Host ''
+    Sync-AppAliases
     Write-Info 'ดูรายการ : aptstack list'
     Write-Info 'สลับแอป  : aptstack use <name> | aptstack next | aptstack prev | aptstack use -'
+    Write-Info 'เข้าหลาย path พร้อมกันได้: /<ชื่อแอป>/ ทุกตัวที่ติดตั้ง'
     if ($added -gt 0) { Write-Info 'database : aptstack seed   (สร้างตารางให้ todolist ด้วย)' }
 }
 
@@ -2612,6 +2649,7 @@ function Cmd-Remove($what, $name, $extra) {
             if (-not (Confirm-Action "พิมพ์ y เพื่อลบ versions\$name ถาวร")) { Write-Info 'ยกเลิก'; return }
             Remove-Item -LiteralPath $dir -Recurse -Force
             Write-Ok "ลบแล้ว: versions\$name"
+            Sync-AppAliases
             Write-Info 'database ไม่ถูกแตะ (อยู่คนละส่วน — data\)'
         }
         'php' {

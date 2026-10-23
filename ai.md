@@ -74,9 +74,9 @@ Write-Utf8NoBom                                                 # เขีย�
 
 ## 6. dispatch ปัจจุบัน
 
-`init · add · list/ls/l · use/u · next · prev · php · mysql · apache · start · stop ·
-restart · status · doctor · backup · seed · samples · report · logs · tls/https ·
-clone · remove/rm · migrate · service · service-run · help/h/-h/--help`
+`init · add · list/ls/l · use/u · next · prev · php · mysql · apache · start · run · stop ·
+restart · status · doctor · backup · seed · samples · report · size · logs · tls/https ·
+clone · remove/rm · migrate · dist · git · service · service-run · help/h/-h/--help`
 
 ## 7. ข้อควรระวังด้านความปลอดภัย
 
@@ -108,3 +108,47 @@ Invoke-WebRequest http://127.0.0.1:8077/app/ -UseBasicParsing
 `docs/คู่มือ.md` ↔ `docs/คู่มือ.html` (คู่กัน) · `README-TH.md` ↔ `README.md` ·
 `CHANGELOG.md` (เพิ่มหัวข้อใหม่) · `docs/SCENARIO.md` (walkthrough) ·
 `docs/OFFLINE-DEPLOY.md` (offline) · `SECURITY.md` (ความปลอดภัย)
+
+---
+
+## 10. Web console (localhost เท่านั้น)
+
+- ไฟล์: `www/aptstack-console/index.php` (commit ลง git — .gitignore เปิด allowlist ไว้)
+- URL: `http://127.0.0.1:<httpPort>/aptstack-console/`
+- **กันภายนอก 2 ชั้น:** ① `REMOTE_ADDR` ต้องเป็น `127.0.0.1`/`::1` (ไม่ใช่ = 403)
+  ② CSRF session token ทุก POST
+- **สั่งงานผ่าน PHP → รัน aptstack.ps1** (`shell_exec` + `escapeshellarg` ทุกอาร์กิวเมนต์)
+  + **whitelist** คำสั่ง: start/stop/restart/status/doctor/list/size/samples/seed/report/logs/
+  use_app (ชื่อต้องอยู่ใน versions จริง) /use_php (regex + อยู่ใน stack/php จริง)
+- ไม่ทำผ่าน web (ใช้ CLI): remove/clone/migrate/service install/tls import — แสดงเป็นคำสั่งให้ copy
+- **หลาย path พร้อมกัน**: `Sync-AppAliases` สร้าง junction `www\<ชื่อapp>` ทุกตัว
+  → เข้าได้ `/app/` `/todo-app/` `/sysinfo-app/` บน listener เดียว (ไม่ใช่หลาย instance)
+- หมายเหตุ: PowerShell output ต้องบังคับ UTF-8 (`[Console]::OutputEncoding`) ไม่งั้นไทย = ????
+
+## 11. สถานะโปรเจกต์ (handoff — อัปเดตล่าสุด 2026-10-23)
+
+**ทำเสร็จแล้ว (รันทดสอบจริง):**
+- core: add/use(next/prev/-)/start/stop/restart/status/doctor/backup/seed/samples/list
+- เพิ่มรุ่น: php (ระบุเลขเวอร์ชัน = เติม URL เอง+โหลด), mysql, apache, app
+- สลับได้ 4 อย่าง + rollback · datadir แยกต่อ engine · dbMode external (ยืม XAMPP)
+- HTTPS (tls init/import + Trusted Root) · vhosts.json (HTTP+HTTPS) · logs · health probe
+- **report** (HTML พิมพ์ได้) + **size** (เตือนบวม/ดิสก์ใกล้เต็ม) + **run** (dev console CLI)
+- **dist** (ชุด copy-paste + VERSIONS.txt/DEPLOY.txt) · **git init|status|clear**
+- **web console** (localhost only) + per-app URL aliases
+- Windows Service (csc.exe) + guard ตอนพอร์ตถูกจอง
+- app family manifest (.aptstack-version) → list/size/report จับกลุุ่ม [todo]
+- docs: คู่มือ.md/.html, SCENARIO, OFFLINE-DEPLOY, diagrams(+5 SVG), SECURITY,
+  review (25 findings), audit, concept, soul, ai, ABOUT-TH, CHANGELOG
+- security: PHP 8.3.36 (patched) · doctor ผ่านทุกข้อ · ไม่มีชื่อ/ข้อมูลระบบจริงใน repo (history ก็ล้างแล้ว)
+
+**pending (งานถัดไป):**
+1. เพิ่มภาพ console ลง README-TH/README + หัวข้อ web console ใน คู่มือ.md/.html
+2. commit + push (token อาจต้องขอใหม่ถ้า revoke ไปแล้ว)
+3. (ค้างเดิม) ทดสอบ migrate end-to-end ด้วย engine ที่สอง · verify checksum อัตโนมัติ
+4. release asset v1.2.0 ยังไม่รวมของใหม่รอบนี้ — ถ้าอยากให้ตรง ให้ rebuild zip + แทน asset
+
+**สภาพแวดล้อม:**
+- repo: github.com/tps2015gh/aptstack (public) · main
+- เครื่อง dev: Win11 · Apache 2.4.69 + PHP 8.3.36 + MariaDB 11.4.13 รันอยู่ · service AptStack ติดตั้งแล้ว
+- token GitHub: **revoke แล้ว** (ทุกครั้งที่ push ต้องขอใหม่) · backup history: aptstack-BEFORE-history-rewrite.bundle (อยู่นอก repo, มีชื่อระบบเก่า — ห้าม share)
+- screenshot console: docs/screenshots/console.png

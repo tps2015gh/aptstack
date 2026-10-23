@@ -43,9 +43,11 @@
 *.pid
 stop.flag
 
-# --- www: เก็บเฉพาะ router.php + ตัวอย่าง โค้ดแอปอยู่ใน versions/ ---
+# --- www: เก็บเฉพาะ router.php + web console โค้ดแอปอยู่ใน versions/ ---
 /www/*
 !/www/router.php
+!/www/aptstack-console/
+!/www/aptstack-console/*
 
 # --- legacy scripts ที่ถูกแทนที่ด้วย aptstack ---
 /start-all.bat
