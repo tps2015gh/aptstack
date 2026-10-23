@@ -57,11 +57,14 @@
 <header>
   <h1>คู่มือใช้งาน aptstack</h1>
   <p class="sub">ฉบับสั้น เน้นลงมือทำ · Portable PHP + MariaDB + จัดการเวอร์ชันแอป สำหรับ Windows</p>
+<p class="sub" style="margin-top:6px">🚀 เพิ่งแตก ZIP ใหม่? อ่าน <a href="SCENARIO.md">SCENARIO.md</a> ก่อน —
+walkthrough ยาว ตั้งแต่แตกไฟล์ → ใส่ binary → เล่น 3 แอป → สลับแอป → ตั้งชื่อ version →
+HTTPS/vhost → Service → backup</p>
 </header>
 
 <div class="nav">
   <b>เนื้อหา:</b>
-  <a href="#s0">คืออะไร</a><a href="#s1">เริ่มใช้</a><a href="#s2">คำสั่ง</a>
+  <a href="#s0">คืออะไร</a><a href="#s1">เริ่มใช้</a><a href="SCENARIO.md">Scenario ยาว</a><a href="#s2">คำสั่ง</a>
   <a href="#s3">สลับเวอร์ชัน</a><a href="#s4">สลับ PHP</a><a href="#s4b">สลับ Apache/MySQL</a><a href="#s5">XAMPP</a><a href="#s5a">HTTPS</a><a href="#s5b">vhosts</a>
   <a href="#s6">Service</a><a href="#s7">ย้าย server</a><a href="#s8">แก้ปัญหา</a>
   <a href="#s9">ความปลอดภัย</a><a href="#s10">โครงสร้าง</a>
@@ -110,14 +113,30 @@ phpMyAdmin: <code>http://127.0.0.1:8077/phpmyadmin/</code> ·
 ขั้นตอนเต็ม + checksum + checklist → <a href="OFFLINE-DEPLOY.md">docs/OFFLINE-DEPLOY.md</a>
 </div>
 
-<h2 id="s2">2. คำสั่งทั้งหมด</h2>
-<pre><code>aptstack init                    เตรียมโครงสร้าง
-aptstack list (ls, l)            ดู version ที่ติดตั้ง + ที่ใช้อยู่
+<div class="box ok">
+<b>ตัวอย่าง 3 แอป</b> (ติดตั้งให้ตอนแตกใหม่ ด้วย <code>aptstack init</code> หรือ <code>aptstack samples</code>)<br>
+<code>hello-app</code> โชว์ PHP + ตาราง <code>greetings</code> ·
+<code>todo-app</code> Todolist CRUD ใช้ database จริง ·
+<code>sysinfo-app</code> inventory (IPv4/subnet/CPU/RAM/disk/PHP/Apache/DB)<br>
+แล้วสลับด้วย <code>aptstack use &lt;ชื่อ&gt;</code> / <code>next</code> / <code>prev</code> / <code>use -</code>
+· เริ่ม: <code>aptstack seed</code> ก่อนใช้ todolist<br><br>
+✅ <b>ยืนยันเรื่องที่อยู่:</b> หลังแตก ZIP ทุกโฟลเดอร์
+(<code>stack\</code>, <code>versions\</code>, <code>config\</code>, <b><code>data\</code></b>, <code>logs\</code>)
+อยู่ <b>ภายในโฟลเดอร์ที่แตกทั้งหมด</b> (ยกเว้น <code>stack\</code> ที่ต้องใส่ binary เองตอนแรก)<br>
+walkthrough เต็ม → <a href="SCENARIO.md">docs/SCENARIO.md</a>
+</div>
 
-aptstack add app &lt;folder|zip&gt;    เพิ่มเวอร์ชันแอป -&gt; versions\&lt;name&gt;
-aptstack add php &lt;zip|url&gt;       เพิ่ม PHP        -&gt; stack\php\&lt;ver&gt;
-aptstack add apache &lt;zip&gt;        เพิ่ม Apache     -&gt; stack\apache\&lt;ver&gt;
-aptstack add mysql &lt;zip&gt;         เพิ่ม MySQL/MariaDB -&gt; stack\mysql\&lt;ver&gt;
+<h2 id="s2">2. คำสั่งทั้งหมด</h2>
+<pre><code>aptstack init                    เตรียมโครงสร้าง (versions\ ว่าง -&gt; ลงตัวอย่างให้)
+aptstack samples                 ติดตั้งตัวอย่างทั้งหมด (hello / todo / sysinfo)
+aptstack list (ls, l)            ดู version + path เต็ม + ที่มา (from:) + แผนที่โฟลเดอร์
+
+aptstack add app &lt;folder|zip&gt; [ชื่อ]  เพิ่มเวอร์ชันแอป -&gt; versions\&lt;ชื่อ&gt;
+aptstack add php 8.3.36          เติม URL ทางการ + โหลด + ติดตั้ง (latest ก็ได้)
+aptstack add php &lt;zip|url&gt;       หรือส่ง URL/path เอง
+aptstack add apache &lt;url|zip&gt;    เพิ่ม Apache     -&gt; stack\apache\&lt;ver&gt;
+aptstack add mysql &lt;ver|zip&gt;     เพิ่ม MySQL/MariaDB -&gt; stack\mysql\&lt;ver&gt;
+aptstack seed                    สร้าง database ตัวอย่าง (greetings + todo_items)
 
 aptstack use                     เมนูเลือก (แอป + PHP) กดเลข + Enter
 aptstack use 1.2.0               สลับแอป + restart ให้เอง
@@ -165,7 +184,24 @@ aptstack doctor</code></pre>
 <pre><code>aptstack add app \\server\share\build-2026-10-22
 aptstack next        <span style="color:#6b7280">:: 1.1.0 -&gt; 2026-10-22</span>
 aptstack prev        <span style="color:#6b7280">:: กลับมา</span></code></pre>
-<p>ชื่อเวอร์ชัน = ชื่อโฟลเดอร์ใน <code>versions\</code> ใช้ prefix สั้น ๆ ได้</p>
+<h3>ตั้งชื่อ version อย่างไร? (ไม่มี format บังคับ)</h3>
+<p><b>ชื่อ = ชื่อโฟลเดอร์ใน <code>versions\</code></b> — ตั้งเองอิสระ 100%
+ไม่ได้อ่านจาก manifest ที่ไหน</p>
+<table>
+<tr><th>ที่มาของชื่อ</th><th></th></tr>
+<tr><td><code>aptstack add app &lt;folder&gt; &lt;ชื่อ&gt;</code></td><td>กำหนดเองตอนเพิ่ม</td></tr>
+<tr><td><code>aptstack add app &lt;zip&gt;</code></td><td>ชื่อไฟล์ zip (ตัด <code>.zip</code>)</td></tr>
+<tr><td><code>aptstack add app examples\todo-app</code></td><td>ชื่อโฟลเดอร์ต้นทาง</td></tr>
+<tr><td>copy เองเข้า <code>versions\</code></td><td>ชื่อโฟลเดอร์ที่ตั้ง</td></tr>
+</table>
+<p>แนะนำให้อ่านรู้เรื่องภายหลัง: <code>1.2.0</code> (release) ·
+<code>build-1022</code> (build) · <code>uat</code>/<code>staging-hotfix</code> (สถานะ) ·
+<code>todo-app</code> (ชื่อโปรเจกต์)</p>
+<div class="box warn"><b>กติกาที่ควรทำ:</b> ไม่เว้นวรรค/ไม่มีสัญลักษณ์แปลก ·
+อย่าชื่อซ้ำ (ของเดิมถูกแทนที่เงียบ) · อย่า rename ตัวที่กำลังใช้อยู่
+(<code>use</code> ไปตัวอื่นก่อน) · prefix สั้นอาจชน (<code>use 1.2</code> ถ้ามี
+<code>1.2.0</code>+<code>1.2.1</code> → เอาตัวใหม่สุด) · ยืนยันด้วย <code>aptstack list</code><br>
+ฉบับเต็ม → <a href="SCENARIO.md">SCENARIO.md</a> ข้อ 6</div>
 
 <h2 id="s4">4. เปลี่ยน PHP (เรื่องความปลอดภัย)</h2>
 <table>
@@ -353,21 +389,33 @@ aptstack doctor            <span style="color:#6b7280">:: ต้องไม่�
 ├── service.ps1                 Windows Service
 ├── service\AptStackService.cs  source ของ service host
 │
+├── examples\                    ✅ ตัวอย่าง 3 แอป + seed.sql (commit ลง git)
+│   ├── hello-app\index.php        โชว์ PHP + ตาราง greetings
+│   ├── todo-app\index.php         Todolist CRUD (ใช้ database จริง)
+│   ├── sysinfo-app\index.php      inventory เครื่อง (IP/subnet/CPU/RAM)
+│   ├── seed.sql                   สร้างด้วย: aptstack seed
+│   └── vhosts.sample.json         ตัวอย่าง config virtual host
+│
 ├── templates\                  ✅ ต้นฉบับ (แก้ตรงนี้, commit ลง git)
 │   ├── php-extensions.ini
 │   ├── php-hardening.ini
-│   └── my.ini.tpl
+│   ├── my.ini.tpl
+│   ├── httpd.conf.tpl             (ใช้เมื่อ webMode=apache)
+│   └── ssl.conf.tpl               (ใช้เมื่อ httpsEnabled=true)
 │
 ├── config\                     ⚠️ config ทั้งหมดอยู่ที่เดียว (gitignore)
-│   ├── stack.json                ★ เลือก version + port
-│   ├── php.ini, my.ini           generate ใหม่ทุก start
-│   ├── pids\  tmp\  stop.flag
+│   ├── stack.json                ★ เลือก version + port + httpsEnabled
+│   ├── vhosts.json               ★ virtual host (ดูข้อ 5b)
+│   ├── certs\                    ★ cert/key ของ TLS
+│   ├── php.ini, my.ini, httpd.conf   generate ใหม่ทุก start (ห้ามแก้)
+│   └── pids\  tmp\  stop.flag
 │
 ├── stack\                      binary (gitignore)
 │   ├── php\8.3.36\  php\8.1.34\
+│   ├── apache\httpd-2.4.69\
 │   └── mysql\mariadb-11.4.13-winx64\
 │
-├── versions\                   โค้ดแอป (gitignore)  1.0.0\ 1.1.0\
+├── versions\                   โค้ดแอป (gitignore)  hello-app\ todo-app\ sysinfo-app\ 1.1.0\
 ├── data\                       database (gitignore)
 │   ├── mariadb-11.4.13-winx64\   datadir
 │   └── dumps\                     *.sql
@@ -378,7 +426,7 @@ aptstack doctor            <span style="color:#6b7280">:: ต้องไม่�
 │   └── app    junction -&gt; versions\&lt;active&gt;
 │
 ├── logs\  downloads\  bin\
-└── docs\                       คู่มือ</code></pre>
+└── docs\                       คู่มือ (คู่มือ.md/.html, SCENARIO.md, OFFLINE-DEPLOY.md, ...)</code></pre>
 
 <div class="box ok">
 <b>กฎทอง:</b> <code>templates\</code> = ต้นฉบับ ·

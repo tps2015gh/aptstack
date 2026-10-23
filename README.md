@@ -6,8 +6,10 @@ one folder you can copy to a server, run as a **Windows Service**, and switch ve
 Inspired by [Laragon](https://laragon.org/) / XAMPP, and by the `devstack` tool — but adds two things
 devstack does not have: **app-version switching** and **Windows Service install**.
 
-> **ภาษาไทย:** [README-TH.md](README-TH.md) · คู่มือใช้งาน [docs/คู่มือ.md](docs/คู่มือ.md) ·
-> [docs/คู่มือ.html](docs/คู่มือ.html) · เทียบกับ devstack [docs/เปรียบเทียบ-devstack.md](docs/เปรียบเทียบ-devstack.md) ·
+> **ภาษาไทย:** 🚀 **[Scenario — extract to running](docs/SCENARIO.md)** ·
+> [README-TH.md](README-TH.md) · คู่มือใช้งาน [docs/คู่มือ.md](docs/คู่มือ.md) ·
+> [docs/คู่มือ.html](docs/คู่มือ.html) · [offline/air-gapped](docs/OFFLINE-DEPLOY.md) ·
+> เทียบกับ devstack [docs/เปรียบเทียบ-devstack.md](docs/เปรียบเทียบ-devstack.md) ·
 > credits + ความเห็นต่อโปรเจกต์ [docs/ABOUT-TH.md](docs/ABOUT-TH.md)
 
 ---
@@ -25,13 +27,29 @@ devstack does not have: **app-version switching** and **Windows Service install*
 
 ```cmd
 cd /d D:\aptstack
-aptstack list            :: what's installed
-aptstack start           :: MariaDB + web
+aptstack init            :: structure + installs the 3 sample apps when versions\ is empty
+aptstack list            :: what's installed (full paths + download source per binary)
+aptstack seed            :: sample database (greetings + todo_items)
+aptstack start           :: database + web  (real health probes, not blind sleeps)
 aptstack doctor          :: security / health check
-aptstack seed            :: load sample database (proves DB connectivity)
 ```
 
-Open <http://127.0.0.1:8077/app/>
+Open <http://127.0.0.1:8077/app/> and switch between the samples:
+
+```cmd
+aptstack use todo-app     :: real CRUD app backed by MySQL
+aptstack use sysinfo-app  :: machine inventory (IPv4/subnet/CPU/RAM/disk)
+aptstack next | prev      :: cycle · aptstack use - = rollback
+```
+
+| Sample | Proves |
+|---|---|
+| `hello-app` | web + PHP + DB connected (`greetings` table) |
+| `todo-app` | **real database usage** (inserts into `todo_items`) |
+| `sysinfo-app` | reads IP/subnet/CPU/RAM/disk of the host it runs on |
+
+> **Everything lives inside the extracted folder** — `stack\`, `versions\`, `config\`,
+> **`data\`**, `logs\`. Nothing is written outside it (only `stack\` needs binaries added first).
 
 > **Offline / air-gapped servers:** `aptstack add` accepts a **local path**, so you can
 > download the PHP/Apache/MariaDB zips on another machine, copy them over (USB / share / RDP),
@@ -92,9 +110,11 @@ are ignored on purpose (this repo is public).
 
 | Command | What it does |
 |---|---|
-| `aptstack init` | create folder structure |
-| `aptstack add app <folder\|zip>` | add app version → `versions\<name>` |
-| `aptstack add php <zip\|url>` | add PHP → `stack\php\<ver>` |
+| `aptstack init` | create structure (installs sample apps if `versions\` is empty) |
+| `aptstack samples` | install all sample apps (`hello` / `todo` / `sysinfo`) |
+| `aptstack add app <folder\|zip> [name]` | add app version → `versions\<name>` (name is free-form) |
+| `aptstack add php 8.3.36` | build official URL, download + install (also accepts `latest`) |
+| `aptstack add php <zip\|url>` | or pass your own URL/path |
 | `aptstack list` | installed versions + active one |
 | `aptstack use <ver>` | switch app version (+ auto restart) |
 | `aptstack use php <ver>` | switch PHP (+ auto restart) |

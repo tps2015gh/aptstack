@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.2.0 — 2026-10-22
+
+ตัวอย่างแอป + คู่มือ scenario + ติดตั้ง PHP อัตโนมัติ
+
+### Added
+
+- **ตัวอย่างแอปเพิ่ม 2 ตัว** (รวม 3) ติดตั้งด้วย `aptstack samples`
+  - `todo-app` — Todolist CRUD ใช้ database จริง (ตาราง `todo_items` ใน `examples/seed.sql`)
+  - `sysinfo-app` — inventory เครื่องคร่าว ๆ: hostname/OS/uptime, **IPv4/subnet/gateway/DNS**
+    (นับ hosts จาก subnet mask), CPU/cores/threads, RAM, disk free, PHP/Apache/DB version
+    (ใช้ `ipconfig` + **PowerShell CIM** — ไม่ใช้ `wmic` ที่ถูกถอดออกจาก Win11 24H2)
+- **`aptstack add php <version>`** — ใส่แค่เลขเวอร์ชัน (หรือ `latest`) ระบบเติม URL ทางการเอง
+  (releases → fallback archives) แล้ว **โหลด + แตก + ติดตั้ง** ให้ในคำสั่งเดียว
+  · `add mysql <version>` ทำได้เช่นกัน (archive.mariadb.org)
+- **บันทึก + แสดงแหล่งที่มา** — ทุกครั้งที่ `add` จะเขียน `.aptstack-source` ไว้ในโฟลเดอร์นั้น
+  แล้ว `aptstack list` แสดงบรรทัด `from: <url>` → copy ไปโหลดเองภายหลังได้
+- **`aptstack samples`** — ติดตั้งตัวอย่างทั้งหมดใน `examples\` (ข้ามตัวที่มีแล้ว)
+  · `init` เรียกให้อัตโนมัติเมื่อ `versions\` ยังว่าง
+- **`docs/SCENARIO.md`** — walkthrough ยาว: แตก ZIP → ใส่ binary → เริ่ม → เล่น 3 แอป
+  → สลับแอป → **ตั้งชื่อ version อย่างไร** → เพิ่มแอปตัวเอง → vhost/HTTPS → Service → backup
+- **`aptstack list`** แสดง path เต็มของทุก app + section "โฟลเดอร์" (วาง/ลบอะไรตรงไหน)
+
+### Fixed
+
+- `sysinfo-app`: CPU/RAM ไม่แสดงบนเครื่องที่ไม่มี `wmic` → เปลี่ยนเป็น PowerShell CIM
+- seed รายงานเลขแถวสุดท้ายผิด label (มี 2 SELECT ในไฟล์เดียว)
+
+### Docs
+
+- `docs/คู่มือ.md` + `.html`, `README-TH.md`, `README.md` — เพิ่มตัวอย่าง 3 แอป,
+  การตั้งชื่อ version, `samples`, `add php <version>`, การยืนยันว่าทุกโฟลเดอร์อยู่ใน ZIP
+
+---
+
 ## 1.1.0 — 2026-10-22
 
 เพิ่มฟีเจอร์ตาม `prompt02.txt` (รายการที่ devstack ยังไม่มี)

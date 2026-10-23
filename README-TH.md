@@ -7,7 +7,9 @@
 **สลับเวอร์ชันแอป** ได้ และ **ลง Windows Service** ได้
 
 > คู่มือทั้งหมด:
+> 🚀 **[Scenario ยาว — แตก ZIP จนใช้จริง](docs/SCENARIO.md)** ·
 > [คู่มือใช้งาน](docs/คู่มือ.md) · [คู่มือ (HTML)](docs/คู่มือ.html) ·
+> [แบบ offline/intranet](docs/OFFLINE-DEPLOY.md) ·
 > [เทียบกับ devstack](docs/เปรียบเทียบ-devstack.md) · [ความปลอดภัย](SECURITY.md) ·
 > [เกี่ยวกับโปรเจกต์ / เครดิต + ความเห็น](docs/ABOUT-TH.md) ·
 > [README ภาษาอังกฤษ](README.md)
@@ -18,20 +20,37 @@
 
 ```cmd
 cd /d D:\aptstack
-aptstack init             :: สร้างโครงสร้าง + ติดตั้งตัวอย่าง app (ถ้ายังไม่มี)
-aptstack start            :: เปิด database + web
-aptstack seed             :: import database ตัวอย่าง (aptstack_demo)
+aptstack init             :: สร้างโครงสร้าง + ติดตั้ง "ตัวอย่าง 3 แอป" ให้เอง
+aptstack seed             :: import database ตัวอย่าง (greetings + todo_items)
+aptstack start            :: เปิด database + web (+ health probe จริง)
 aptstack doctor           :: ตรวจสุขภาพ + ช่องโหว่
 ```
 
-เปิดเบราว์เซอร์ → **http://127.0.0.1:8077/app/**
-(ตัวอย่าง app จะโชว์ PHP version + ตาราง `greetings` จาก database → พิสูจน์ว่าทุกอย่างรันได้จริง)
+เปิดเบราว์เซอร์ → **http://127.0.0.1:8077/app/** แล้วสลับดูได้เลย:
+
+```cmd
+aptstack list             :: เห็น path เต็มของทุก app
+aptstack use todo-app     :: Todolist (ใช้ database จริง)
+aptstack use sysinfo-app  :: inventory เครื่อง (IPv4/subnet/CPU/RAM/disk)
+aptstack next | prev      :: วนดู · aptstack use - = ย้อนกลับ
+```
+
+| ตัวอย่าง | พิสูจน์ |
+|---|---|
+| `hello-app` | web+PHP+DB เชื่อมกัน (ตาราง `greetings`) |
+| `todo-app` | **ใช้ database ได้จริง** (CRUD ลง `todo_items`) |
+| `sysinfo-app` | อ่าน IP/subnet/CPU/RAM/disk ของเครื่องที่รันได้ |
 
 phpMyAdmin → **http://127.0.0.1:8077/phpmyadmin/** (ถ้ามีใน `www\`)
 
 > **บน release ที่ดาวน์โหลดมา** จะมีแค่ scripts/templates/docs + `examples\`
-> ต้องโหลด PHP เอง: `aptstack add php <php-x.y.z-Win32-vs16-x64.zip>`
+> ต้องใส่ binary เอง — **ใส่แค่เลขเวอร์ชันก็ได้**:
+> `aptstack add php 8.3.36` (ระบบเติม URL ทางการ + โหลด + ติดตั้งให้)
+> แล้ว `aptstack list` จะโชว์ `from: <url>` ให้ copy โหลดเองภายหลังได้
 > (สายที่ปลอดภัย: 8.3.36 / 8.4.27 / 8.5.12 / 8.2.35)
+>
+> 📌 **ทุกโฟลเดอร์อยู่ในโฟลเดอร์ที่แตก** — `stack\`, `versions\`, `config\`, **`data\`**, `logs\`
+> ไม่มีการเขียนออกนอกนั้น (ยกเว้น `stack\` ที่ต้องใส่ binary ตอนแรก)
 
 ### โหลด binary แบบ offline / intranet (server ไม่มีเน็ต)
 
@@ -72,6 +91,20 @@ aptstack next             :: วนดูหลายเวอร์ชัน
 
 ที่อยู่ข้างหลัง: `www\app` เป็น **junction** ชี้ไป `versions\<เวอร์ชัน>`
 → ของเก่าไม่หาย ย้อนกลับได้เสมอ
+
+**ตั้งชื่อ version อย่างไร?** → **ชื่อ = ชื่อโฟลเดอร์ใน `versions\`** ตั้งเองอิสระ 100%
+ไม่มี format บังคับ ไม่ได้อ่านจาก manifest ที่ไหน
+
+| อยากได้ชื่อแบบ | ตัวอย่าง | ทำยังไง |
+|---|---|---|
+| release | `1.2.0` | `aptstack add app C:\deploy\myapp.zip myapp-1.2.0` |
+| build รายวัน | `build-1022` | `aptstack add app \\share\build-1022` |
+| สถานะ | `uat`, `staging-hotfix` | ตั้งชื่อโฟลเดอร์แล้ว `add app <path>` |
+| ชื่อโปรเจกต์ | `todo-app`, `sysinfo-app` | `aptstack samples` ตั้งให้เอง |
+
+กติกา: ไม่เว้นวรรค · อย่าชื่อซ้ำ · อย่า rename ตัวที่กำลังใช้อยู่ · prefix สั้นอาจชน
+(`use 1.2` ถ้ามี `1.2.0`+`1.2.1` → เอาตัวใหม่สุด) · ยืนยันด้วย `aptstack list`
+→ รายละเอียด: [docs/SCENARIO.md](docs/SCENARIO.md) ข้อ 6
 
 ### 2) เปลี่ยน PHP (เรื่องความปลอดภัย)
 
@@ -139,11 +172,21 @@ aptstack\
 ├── aptstack.ps1              ตรรกะทั้งหมด
 ├── setup.ps1                 wizard ติดตั้งครั้งแรก
 ├── service.ps1               ติดตั้ง/ถอน Windows Service
+├── service\AptStackService.cs  source ของ service host (compile เองตอน install)
+│
+├── examples\                 ✅ ตัวอย่าง 3 แอป + seed.sql (commit ลง git)
+│   ├── hello-app\              โชว์ PHP + ตาราง greetings
+│   ├── todo-app\               Todolist CRUD (ใช้ database จริง)
+│   ├── sysinfo-app\            inventory เครื่อง (IP/subnet/CPU/RAM)
+│   ├── seed.sql                รันด้วย: aptstack seed
+│   └── vhosts.sample.json      ตัวอย่าง virtual host
 │
 ├── templates\                ✅ แก้ที่นี่ (ถาวร, commit ลง git)
 │   ├── php-extensions.ini      รายการ extension ที่เปิด
 │   ├── php-hardening.ini       ค่าความปลอดภัย
-│   └── my.ini.tpl              template ของ MariaDB
+│   ├── my.ini.tpl              template ของ MariaDB
+│   ├── httpd.conf.tpl          (webMode=apache)
+│   └── ssl.conf.tpl            (httpsEnabled=true)
 │
 ├── config\                   ⚠️ config อยู่ที่เดียว (ห้าม commit)
 │   ├── stack.json               ★ เลือก version + port + httpsEnabled
@@ -157,7 +200,7 @@ aptstack\
 │   ├── apache\httpd-2.4.69\
 │   └── mysql\mariadb-11.4.13-winx64\
 │
-├── versions\                 โค้ดแอป (ห้าม commit)  versions\1.0.0\, 1.1.0\
+├── versions\                 โค้ดแอป (ห้าม commit)  hello-app\ todo-app\ sysinfo-app\ 1.1.0\
 ├── data\                     ฐานข้อมูล (ห้าม commit)
 │   ├── mariadb-11.4.13-winx64\   datadir จริง
 │   └── dumps\                    *.sql

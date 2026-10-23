@@ -1132,13 +1132,88 @@ function Expand-AndFlatten($zip, $dest) {
     }
 }
 
+# ---------------------------------------------------- official URL + source
+function Get-OfficialUrls([string]$kind, [string]$ver) {
+    # คืน URL ทางการเป็น list (ลองทีละอัน — PHP มี releases กับ archives)
+    if ($ver -eq 'latest' -or -not $ver) { $ver = '8.3.36' }   # ค่าผ่านเกณฑ์ security-php.txt
+    switch ("$kind".ToLower()) {
+        'php' {
+            $base = "php-$ver-Win32-vs16-x64.zip"   # Thread Safe x64 เสมอ
+            return @(
+                "https://windows.php.net/downloads/releases/$base",
+                "https://windows.php.net/downloads/releases/archives/$base"
+            )
+        }
+        'mysql' { return @("https://archive.mariadb.org/mariadb-$ver/winx64-packages/mariadb-$ver-winx64.zip") }
+        default { return @() }   # apache: ชื่อไฟล์มีเลข build -> เติมให้ไม่ได้
+    }
+}
+
+function Set-SourceMeta($destDir, [string]$kind, [string]$source) {
+    try {
+        if (-not $destDir -or -not (Test-Path $destDir)) { return }
+        $txt = @"
+# aptstack: แหล่งที่มาของ binary ตัวนี้
+# copy บรรทัด source= ไปโหลดเองภายหลังได้ (หรือใช้ docs\OFFLINE-DEPLOY.md)
+kind=$kind
+source=$source
+installed=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+"@
+        Write-Utf8NoBom (Join-Path $destDir '.aptstack-source') ($txt + "`r`n")
+    } catch { }
+}
+
+function Get-SourceMeta($destDir) {
+    $f = Join-Path $destDir '.aptstack-source'
+    if (-not $destDir -or -not (Test-Path $f)) { return $null }
+    $h = @{}
+    foreach ($l in (Get-Content $f -ErrorAction SilentlyContinue)) {
+        if ("$l" -match '^\s*#' -or "$l" -notmatch '=') { continue }
+        $i = "$l".IndexOf('=')
+        $h[$l.Substring(0, $i).Trim()] = $l.Substring($i + 1).Trim()
+    }
+    if ($h['source']) { return $h }
+    return $null
+}
+
 function Cmd-Add($kind, $source, $extra) {
-    if (-not $kind -or -not $source) { throw 'ใช้: aptstack add <app|php|mysql> <path|url> [name]' }
+    if (-not $kind -or -not $source) {
+        throw 'ใช้: aptstack add <app|php|mysql|apache> <path|url|version> [name]   (เช่น: aptstack add php 8.3.36)'
+    }
     Ensure-Dirs
+
+    # ใส่แค่เลขเวอร์ชัน / latest -> เติม URL ทางการให้เอง แล้ว print ให้เห็น (จะได้ copy โหลดเองได้)
+    $origSource = $source
+    $candidates = @($source)
+    $isBinary = @('php', 'mysql', 'apache') -contains ("$kind".ToLower())
+    if ($isBinary -and ($source -eq 'latest' -or $source -match '^\d{1,2}\.\d{1,2}(\.\d{1,2})?$')) {
+        $candidates = @(Get-OfficialUrls $kind $source)
+        if ($candidates.Count -eq 0) {
+            $page = if ("$kind".ToLower() -eq 'apache') { '  หน้าดาวน์โหลด: https://www.apachelounge.com/download/' } else { '' }
+            throw "$kind เติม URL อัตโนมัติไม่ได้ (ชื่อไฟล์มีเลข build) — ส่ง URL เต็มหรือ path มา.$page"
+        }
+        Write-Head "เติม URL ทางการให้ ($kind $source)"
+        foreach ($u in $candidates) { Write-Info $u }
+        Write-Info 'คัดลอก URL ข้างบนไว้โหลดเองภายหลังได้ · ไม่มีเน็ต -> docs\OFFLINE-DEPLOY.md'
+    }
+
+    # ลองทีละ URL (เช่น PHP releases ไม่เจอ -> ไป archives)
+    $src = $null
+    $lastErr = ''
+    foreach ($u in $candidates) {
+        try {
+            $src = Get-DownloadedZip $u
+            if ($src) { $origSource = $u; break }
+        } catch {
+            $lastErr = "$($_.Exception.Message)"
+            Write-Warn2 "ลองไม่สำเร็จ: $u"
+        }
+    }
+    if (-not $src) { throw "โหลด/หาไฟล์ไม่สำเร็จ: $lastErr" }
 
     switch ($kind.ToLower()) {
         'app' {
-            $src = Get-DownloadedZip $source
+            # $src ถูก resolve ไว้ด้านบนแล้ว (รองรับ URL / เลขเวอร์ชัน / path)
             $name = if ($extra) { $extra } else {
                 $n = Split-Path $src -Leaf
                 $n -replace '\.(zip|7z|tar\.gz)$', ''
@@ -1152,11 +1227,12 @@ function Cmd-Add($kind, $source, $extra) {
             } else {
                 Expand-AndFlatten $src $dest
             }
+            Set-SourceMeta $dest $kind $origSource
             Write-Ok "ติดตั้ง app $name เรียบร้อย"
             Write-Info "เปิดใช้: aptstack use $name"
         }
         'php' {
-            $src = Get-DownloadedZip $source
+            # $src ถูก resolve ไว้ด้านบนแล้ว (รองรับ URL / เลขเวอร์ชัน / path)
             if (Test-Path $src -PathType Container) { throw 'PHP ต้องเป็นไฟล์ .zip' }
             $leaf = [IO.Path]::GetFileNameWithoutExtension((Split-Path $src -Leaf))
             $name = if ($leaf -match 'php-(\d+\.\d+\.\d+)') { $Matches[1] } else { $leaf }
@@ -1166,6 +1242,7 @@ function Cmd-Add($kind, $source, $extra) {
             Expand-AndFlatten $src $dest
             if (-not (Test-Path (Join-Path $dest 'php.exe'))) { throw "zip ไม่มี php.exe — ตรวจว่าเลือกถูกตัว" }
             $php = Resolve-Php $name
+            Set-SourceMeta $dest $kind $origSource
             Write-Ok "ติดตั้ง PHP $($php.Version) เรียบร้อย"
             if ($php.ApacheMod) { Write-Info 'Thread Safe build (มี php8apache2_4.dll)' }
             else { Write-Info 'NTS build — ใช้ได้กับ PHP built-in server ของ aptstack เท่านั้น' }
@@ -1174,7 +1251,7 @@ function Cmd-Add($kind, $source, $extra) {
             Write-Info "เปิดใช้: aptstack use php $($php.Version)"
         }
         'mysql' {
-            $src = Get-DownloadedZip $source
+            # $src ถูก resolve ไว้ด้านบนแล้ว (รองรับ URL / เลขเวอร์ชัน / path)
             if (Test-Path $src -PathType Container) { throw 'MySQL/MariaDB ต้องเป็นไฟล์ .zip' }
             $leaf = [IO.Path]::GetFileNameWithoutExtension((Split-Path $src -Leaf))
             $name = if ($leaf -match '(\d+\.\d+\.\d+)') { $Matches[1] } else { $leaf }
@@ -1182,10 +1259,11 @@ function Cmd-Add($kind, $source, $extra) {
             if (Test-Path $dest) { Write-Warn2 "มีอยู่แล้ว: $dest"; return }
             Write-Head "ติดตั้ง MySQL/MariaDB -> stack\mysql\$name"
             Expand-AndFlatten $src $dest
+            Set-SourceMeta $dest $kind $origSource
             Write-Ok "ติดตั้งแล้ว — datadir จะถูกสร้างใหม่ต่อ version (data ไม่ปนกัน)"
         }
         'apache' {
-            $src = Get-DownloadedZip $source
+            # $src ถูก resolve ไว้ด้านบนแล้ว (รองรับ URL / เลขเวอร์ชัน / path)
             if (Test-Path $src -PathType Container) { throw 'Apache ต้องเป็นไฟล์ .zip' }
             $leaf = [IO.Path]::GetFileNameWithoutExtension((Split-Path $src -Leaf))
             $name = if ($leaf -match 'httpd-(\d+\.\d+\.\d+)') { "httpd-$($Matches[1])" } else { $leaf }
@@ -1198,6 +1276,7 @@ function Cmd-Add($kind, $source, $extra) {
                 $f = Get-ChildItem $dest -Recurse -File -Filter 'httpd.exe' | Select-Object -First 1
                 if ($f) { $httpd = $f.FullName } else { throw 'zip ไม่มี bin\httpd.exe' }
             }
+            Set-SourceMeta $dest $kind $origSource
             $php = Resolve-Php (Get-Config).php
             if ($php -and (Test-Path (Join-Path $php.Dir 'php8apache2_4.dll'))) {
                 Write-Ok "Apache พร้อมใช้ mod_php กับ PHP $($php.Version)"
@@ -1233,17 +1312,27 @@ function Cmd-List {
         $r = Get-PhpRisk $p.Version
         $tag = if ($r -eq 'UNPATCHED') { '  <- ยังไม่ patch ช่องโหว่ RCE' } elseif ($r -eq 'EOL') { '  <- EOL ไม่มี patch' } else { '' }
         Write-Host "   $mark $($p.Version)  $($p.Dir)$tag" -ForegroundColor $(if ($tag) { 'Yellow' } else { 'Gray' })
+        $sm = Get-SourceMeta $p.Dir
+        if ($sm -and $sm['source']) { Write-Host "           from: $($sm['source'])" -ForegroundColor DarkGray }
     }
 
     $dbs = @(Get-MySqlVersions)
     Write-Host '  Database:' -ForegroundColor White
     if ($dbs.Count -eq 0) { Write-Info '(ยังไม่มี)' }
-    foreach ($m in $dbs) { Write-Host "     $($m.Version)  $($m.Dir)" -ForegroundColor Gray }
+    foreach ($m in $dbs) {
+        Write-Host "     $($m.Version)  $($m.Dir)" -ForegroundColor Gray
+        $sm = Get-SourceMeta $m.Dir
+        if ($sm -and $sm['source']) { Write-Host "           from: $($sm['source'])" -ForegroundColor DarkGray }
+    }
 
     $aps = @(Get-ApacheVersions)
     Write-Host '  Apache:' -ForegroundColor White
     if ($aps.Count -eq 0) { Write-Info '(ยังไม่มี) ใช้ได้ด้วย: aptstack add apache <httpd zip>' }
-    foreach ($a in $aps) { Write-Host "     $($a.Version)  $($a.Dir)" -ForegroundColor Gray }
+    foreach ($a in $aps) {
+        Write-Host "     $($a.Version)  $($a.Dir)" -ForegroundColor Gray
+        $sm = Get-SourceMeta $a.Dir
+        if ($sm -and $sm['source']) { Write-Host "           from: $($sm['source'])" -ForegroundColor DarkGray }
+    }
 
     $phpCur = Resolve-Php $cfg.php
     $wm = Resolve-WebMode $cfg $phpCur (Resolve-Apache $cfg.apache)
@@ -1808,16 +1897,8 @@ function Cmd-Init {
     if (-not (Test-Path $Script:P.Config)) { Save-Config (Get-Config) }
     $cfg = Get-Config
 
-    # ถ้ายังไม่มีแอปเลย -> ติดตั้งตัวอย่าง hello-app ให้ (ของจริงอยู่ใน examples\ ไม่ถูก git ignore)
-    if (@(Get-AppVersions).Count -eq 0) {
-        $ex = Join-Path $Root 'examples\hello-app'
-        if (Test-Path $ex) {
-            $dest = Join-Path $Script:P.Versions 'hello-1.0.0'
-            robocopy $ex $dest /E /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
-            Write-Ok 'ติดตั้งตัวอย่าง app -> versions\hello-1.0.0'
-            Write-Info 'ใช้งาน: aptstack start แล้วเปิด http://127.0.0.1:<port>/<appAlias>/'
-        }
-    }
+    # ถ้ายังไม่มีแอปเลย -> ติดตั้ง "ตัวอย่างทั้งหมด" ใน examples\ (มี index.php)
+    if (@(Get-AppVersions).Count -eq 0) { Cmd-Samples }
 
     if (-not (Get-Item -LiteralPath (Join-Path $Script:P.Www $cfg.appAlias) -Force -EA SilentlyContinue)) {
         $apps = @(Get-AppVersions)
@@ -1838,6 +1919,47 @@ echo "mysqli: " . (extension_loaded('mysqli') ? 'OK' : 'MISSING') . "\n";
     }
     Write-Ok "เตรียมโครงสร้างที่ $Root"
     Write-Info 'ต่อไป: aptstack start  แล้ว  aptstack seed  (database ตัวอย่าง)'
+}
+
+function Cmd-Samples {
+    # ติดตั้ง "ตัวอย่างแอป" ทุกตัวใน examples\ (โฟลเดอร์ที่มี index.php)
+    # ใช้ตอนแตก zip ใหม่เพื่อให้เห็นทันทีว่า stack + DB สลับแอปได้จริง
+    Ensure-Dirs
+    $exRoot = Join-Path $Root 'examples'
+    $samples = @()
+    if (Test-Path $exRoot) {
+        $samples = @(Get-ChildItem $exRoot -Directory -ErrorAction SilentlyContinue |
+                     Where-Object { Test-Path (Join-Path $_.FullName 'index.php') })
+    }
+    if ($samples.Count -eq 0) { Write-Warn2 'ไม่พบตัวอย่างใน examples\'; return }
+
+    Write-Head 'ติดตั้งตัวอย่างแอป (examples\)'
+    $added = 0
+    foreach ($s in $samples) {
+        $dest = Join-Path $Script:P.Versions $s.Name
+        if (Test-Path $dest) { Write-Info "มีแล้ว: versions\$($s.Name)"; continue }
+        robocopy $s.FullName $dest /E /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
+        if ($LASTEXITCODE -ge 8) { Write-Err2 "copy ล้มเหลว: $($s.Name)"; continue }
+        Set-SourceMeta $dest 'app' "examples\$($s.Name)"
+        Write-Ok "ติดตั้ง versions\$($s.Name)"
+        $added++
+    }
+
+    # ถ้ายังไม่มี junction ให้ชี้ไปตัวแรก
+    $cfg = Get-Config
+    if (-not (Get-Item -LiteralPath (Join-Path $Script:P.Www $cfg.appAlias) -Force -EA SilentlyContinue)) {
+        $apps = @(Get-AppVersions)
+        if ($apps.Count -gt 0) {
+            Set-AppLink $apps[-1].Name
+            $cfg.app = $apps[-1].Name
+            Save-Config $cfg
+            Write-Info "ชี้ www\$($cfg.appAlias) -> $($apps[-1].Name)"
+        }
+    }
+    Write-Host ''
+    Write-Info 'ดูรายการ : aptstack list'
+    Write-Info 'สลับแอป  : aptstack use <name> | aptstack next | aptstack prev | aptstack use -'
+    if ($added -gt 0) { Write-Info 'database : aptstack seed   (สร้างตารางให้ todolist ด้วย)' }
 }
 
 function Cmd-Seed {
@@ -1884,20 +2006,23 @@ function Cmd-Seed {
     if ($code -ne 0) {
         throw ("import ล้มเหลว (exit $code):`n" + (($out | Select-Object -First 6) -join "`n"))
     }
-    $countLine = $out | Where-Object { "$_" -match '^\s*\d+\s*$' } | Select-Object -Last 1
+    $nums = @($out | Where-Object { "$_" -match '^\s*\d+\s*$' } | ForEach-Object { "$_".Trim() })
     Write-Ok 'import เรียบร้อย (CREATE DATABASE IF NOT EXISTS — ซ้ำได้)'
-    if ($countLine) { Write-Info "greetings rows: $("$countLine".Trim())" }
-    Write-Info 'เปิดดู:  http://127.0.0.1:<port>/<appAlias>/  แล้วดูตารางด้านล่าง'
+    if ($nums.Count -gt 0) { Write-Info ("rows ทุกตารางใน seed: " + ($nums -join ', ')) }
+    Write-Info 'เปิดดู:  http://127.0.0.1:<port>/<appAlias>/  (hello ดูตาราง greetings · todo ดู todo_items)'
 }
 
 function Cmd-Help {
     Write-Head 'aptstack — portable PHP / MariaDB / app-version manager'
     @'
   ── ติดตั้งครั้งแรก ───────────────────────────────────
-  aptstack init                    เตรียมโครงสร้างโฟลเดอร์
+  aptstack init                    เตรียมโครงสร้างโฟลเดอร์ (ไม่มีแอปเลย -> ลงตัวอย่างให้)
+  aptstack samples                 ติดตั้งตัวอย่างทั้งหมด (hello / todo / sysinfo)
   aptstack add app <folder|zip>    เพิ่มเวอร์ชันแอป -> versions\<name>
-  aptstack add php <zip|url>       เพิ่ม PHP        -> stack\php\<ver>
-  aptstack list                    ดูที่ติดตั้ง + ที่ใช้อยู่
+  aptstack seed                    สร้าง database ตัวอย่าง (greetings + todo_items)
+  aptstack add php 8.3.36          เติม URL ทางการให้เอง + โหลด + ติดตั้ง (ใช้ latest ก็ได้)
+  aptstack add php <zip|url>       หรือส่ง URL/path เอง
+  aptstack list                    ดูที่ติดตั้ง + ที่ใช้อยู่ (มี from: <url> ให้ copy โหลดเองได้)
   aptstack start                   เริ่ม MariaDB + Web
   aptstack doctor                  ตรวจสุขภาพ + ช่องโหว่ RCE
 
@@ -1912,7 +2037,7 @@ function Cmd-Help {
   aptstack use mysql 11.4.13       สลับ MySQL/MariaDB (datadir แยกต่อ version)
   aptstack add app <folder|zip>    copy version ใหม่ลง แล้ว use เลย
   aptstack add apache <zip>        เพิ่ม Apache -> stack\apache\
-  aptstack add mysql <zip>         เพิ่ม MySQL/MariaDB -> stack\mysql\
+  aptstack add mysql <version|zip> เพิ่ม MySQL/MariaDB -> stack\mysql\
 
   ── web / db mode (config\stack.json) ─────────────────
   "webMode":  "auto"|"apache"|"builtin"
@@ -1983,6 +2108,7 @@ switch ($Command.ToLower()) {
     'doctor'      { Cmd-Doctor }
     'backup'      { Cmd-Backup $Action }
     'seed'        { Cmd-Seed }
+    'samples'     { Cmd-Samples }
     'logs'        { Cmd-Logs $Action $Value }
     'tls'         { Cmd-Tls $Action $Value $Extra }
     'https'       { Cmd-Tls $Action $Value $Extra }
