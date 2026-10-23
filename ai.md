@@ -125,7 +125,7 @@ Invoke-WebRequest http://127.0.0.1:8077/app/ -UseBasicParsing
   → เข้าได้ `/app/` `/todo-app/` `/sysinfo-app/` บน listener เดียว (ไม่ใช่หลาย instance)
 - หมายเหตุ: PowerShell output ต้องบังคับ UTF-8 (`[Console]::OutputEncoding`) ไม่งั้นไทย = ????
 
-## 11. สถานะโปรเจกต์ (handoff — อัปเดตล่าสุด 2026-10-23)
+## 11. สถานะโปรเจกต์ (handoff — อัปเดตล่าสุด 2026-10-23 ~22:40)
 
 **ทำเสร็จแล้ว (รันทดสอบจริง):**
 - core: add/use(next/prev/-)/start/stop/restart/status/doctor/backup/seed/samples/list
@@ -142,10 +142,15 @@ Invoke-WebRequest http://127.0.0.1:8077/app/ -UseBasicParsing
 - security: PHP 8.3.36 (patched) · doctor ผ่านทุกข้อ · ไม่มีชื่อ/ข้อมูลระบบจริงใน repo (history ก็ล้างแล้ว)
 
 **pending (งานถัดไป):**
-1. ~~เพิ่มภาพ console ลง README-TH/README + หัวข้อ web console ใน คู่มือ.md/.html~~ ✅ 2026-10-23
-2. commit + push (token อาจต้องขอใหม่ถ้า revoke ไปแล้ว)
-3. ~~ทดสอบ migrate end-to-end ด้วย engine ที่สอง~~ ✅ 2026-10-23 (11.4.13→10.11.19 ผ่าน · แก้บั๊ค mysql_install_db) · verify checksum อัตโนมัติ (ยังไม่ทำ)
-4. rebuild release เป็น v1.3.0 (รวม console/report/size/dist/git/clone/remove/migrate ทั้งหมด)
+1. ~~ภาพ console + เอกสาร web console~~ ✅
+2. ~~commit + push~~ ✅ main = b1c1fc0
+3. ~~migrate end-to-end engine ที่สอง~~ ✅ 11.4.13→10.11.19 (dump/restore + rollback) · แก้บั๊ค MariaDB init (`mysql_install_db`) · verify checksum อัตโนมัติบน `add` (ยัง open)
+4. ~~release v1.3.0~~ ✅ tag ชี้ b1c1fc0 · asset แทนแล้ว (zip 231351 B, SHA256 5CFBC7…429 ตรงกับ local) · https://github.com/tps2015gh/aptstack/releases/tag/v1.3.0
+
+**หมายเหตุ runtime (ไม่ใช่ของ repo):**
+- port 3307 ถูก bundle อื่น (`2569-10-23-TryUse-AppStack\aptstack-1.1.0`) จองอยู่
+  → stack ชุดนี้ชั่วคราวใช้ **dbPort=3308** ใน `config\stack.json` (gitignored)
+  ถ้าอยากคืน 3307: หยุด mariadbd ของ bundle อื่น แล้วแก้ `config\stack.json` แล้ว `aptstack restart`
 
 **สภาพแวดล้อม:**
 - repo: github.com/tps2015gh/aptstack (public) · main
