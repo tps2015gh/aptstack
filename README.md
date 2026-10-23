@@ -11,7 +11,7 @@ devstack does not have: **app-version switching** and **Windows Service install*
 > [docs/คู่มือ.html](docs/คู่มือ.html) · [offline/air-gapped](docs/OFFLINE-DEPLOY.md) ·
 > เทียบกับ devstack [docs/เปรียบเทียบ-devstack.md](docs/เปรียบเทียบ-devstack.md) ·
 > credits + ความเห็นต่อโปรเจกต์ [docs/ABOUT-TH.md](docs/ABOUT-TH.md) ·
-> diagrams (SVG+Mermaid) [docs/diagrams.md](docs/diagrams.md) ·
+> diagrams (SVG+Mermaid) [docs/diagrams.md](docs/diagrams.md) ·`r`n> project timeline [apphistory.md](apphistory.md) ·
 > deep dives: [review](review.md) (bugs found & fixed) · [audit](audit.md) (security) ·
 > [concept](concept.md) (architecture) · [soul](soul.md) (philosophy) · [ai](ai.md) (for AI agents)
 

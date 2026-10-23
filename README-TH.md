@@ -9,6 +9,7 @@
 > คู่มือทั้งหมด:
 > 🚀 **[Scenario ยาว — แตก ZIP จนใช้จริง](docs/SCENARIO.md)** ·
 > [ไดอะแกรม/ภาพรวมระบบ](docs/diagrams.md) ·
+> [ประวัติการพัฒนา / ไทม์ไลน์](apphistory.md) ·
 > [คู่มือใช้งาน](docs/คู่มือ.md) · [คู่มือ (HTML)](docs/คู่มือ.html) ·
 > [แบบ offline/intranet](docs/OFFLINE-DEPLOY.md) ·
 > [เทียบกับ devstack](docs/เปรียบเทียบ-devstack.md) · [ความปลอดภัย](SECURITY.md) ·

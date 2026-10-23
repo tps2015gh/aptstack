@@ -152,3 +152,4 @@ Invoke-WebRequest http://127.0.0.1:8077/app/ -UseBasicParsing
 - เครื่อง dev: Win11 · Apache 2.4.69 + PHP 8.3.36 + MariaDB 11.4.13 รันอยู่ · service AptStack ติดตั้งแล้ว
 - token GitHub: **revoke แล้ว** (ทุกครั้งที่ push ต้องขอใหม่) · backup history: aptstack-BEFORE-history-rewrite.bundle (อยู่นอก repo, มีชื่อระบบเก่า — ห้าม share)
 - screenshot console: docs/screenshots/console.png
+- ไทม์ไลน์/ประวัติ: apphistory.md (คู่กับ CHANGELOG)
