@@ -11,7 +11,7 @@
 
 ```cmd
 :: ได้ไฟล์มาจาก GitHub Release แล้ว
-tar -xf aptstack-1.2.0.zip -C D:\
+tar -xf aptstack-1.3.0.zip -C D:\
 cd /d D:\aptstack
 
 aptstack add php 8.3.36        :: เติม URL ทางการให้เอง + โหลด + ติดตั้ง
@@ -39,7 +39,7 @@ aptstack doctor                :: ต้องไม่มี [ERR]
 
 ```cmd
 :: Windows 10/11 มี tar ในตัว (หรือใช้ 7-Zip / Expand-Archive)
-tar -xf aptstack-1.2.0.zip -C D:\
+tar -xf aptstack-1.3.0.zip -C D:\
 cd /d D:\aptstack
 ```
 

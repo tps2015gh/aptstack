@@ -81,12 +81,13 @@ tar -tf php-8.3.36-Win32-vs16-x64.zip | findstr php8apache2_4.dll
 **จัดเตรียม 2 อย่าง:**
 
 1. **zip ของ aptstack** — ดาวน์โหลดจาก GitHub Release บนเครื่อง prep
-   (https://github.com/tps2015gh/aptstack/releases) → `aptstack-1.1.0.zip` (~87KB)
+   (https://github.com/tps2015gh/aptstack/releases) → `aptstack-1.3.0.zip`
+   (แตกแล้วได้โฟลเดอร์ `aptstack\` พร้อมใช้)
 2. **โฟลเดอร์ staging ของ binary** รวมไฟล์ทั้งหมดในข้อ 1
 
 ```
 D:\staging\
-  aptstack-1.1.0.zip
+  aptstack-1.3.0.zip
   php-8.3.36-Win32-vs16-x64.zip
   httpd-2.4.69-261002-Win64-VS18.zip
   mariadb-11.4.13-winx64.zip
@@ -99,8 +100,8 @@ D:\staging\
 ## 3. ติดตั้งบน server — ไม่แตะ internet เลย
 
 ```cmd
-:: 1) แตก aptstack
-tar -xf D:\staging\aptstack-1.1.0.zip -C E:\
+:: 1) แตก aptstack (zip มีโฟลเดอร์บนสุดอยู่แล้ว -> ได้ E:\aptstack\)
+tar -xf D:\staging\aptstack-1.3.0.zip -C E:\
 cd /d E:\aptstack
 
 :: 2) (ถ้าจำเป็น) ติดตั้ง VC++ runtime

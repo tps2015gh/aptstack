@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (หลัง 1.2.0)
+## 1.3.0 — 2026-10-23
 
 คำสั่งจัดการ version/ข้อมูล + รายงานสถานะ + พื้นที่ดิสก์ + ไดอะแกรม + เอกสารแกนกลาง
 
@@ -60,6 +60,9 @@
 - **ดาวน์โหลดจาก `apachelounge.com` ล้มเหลว** บน PS5.1 (`Invoke-WebRequest` = "Operation is not
   valid due to the current state of the object") → **fallback ไป `curl.exe`** ทั้งตอน fetch หน้า
   และตอนโหลด zip (ไม่มี stream redirection → ไม่ชน NativeCommandError กับ `EAP=Stop`)
+- **release zip ไม่มีโฟลเดอร์บนสุด** → แตกแล้วไฟล์กระจายลง drive (แต่คู่มือสอน `tar -xf ... -C D:\`
+  ตามด้วย `cd /d D:\aptstack`) → `make-release.ps1` เพิ่ม `--prefix=aptstack/` ให้แตกได้เป็น
+  `D:\aptstack\` ตรงตามทุกคู่มือ · อัปเดตชื่อ zip ใน SCENARIO/OFFLINE-DEPLOY เป็น 1.3.0
 
 ---
 

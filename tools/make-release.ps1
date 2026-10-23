@@ -43,7 +43,9 @@ $out = Join-Path $dist "aptstack-$Version.zip"
 if (Test-Path $out) { Remove-Item $out -Force }
 
 Head "git archive -> $out"
-& git -C $Root archive --format=zip -o "$out" HEAD
+# --prefix: zip ต้องมีโฟลเดอร์บนสุดชื่อ aptstack\ ไม่งั้นแตกแล้วไฟล์กระจายลง drive ที่ -C ชี้
+# (คู่มืออย่าง SCENARIO.md สอน `tar -xf ... -C D:\` ตามด้วย `cd /d D:\aptstack`)
+& git -C $Root archive --format=zip --prefix=aptstack/ -o "$out" HEAD
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $out)) { throw 'git archive ล้มเหลว' }
 Ok ("{0}  ({1:N2} MB)" -f (Split-Path $out -Leaf), ((Get-Item $out).Length / 1MB))
 
