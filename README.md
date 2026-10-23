@@ -103,6 +103,20 @@ aptstack\
 └── docs\                     manuals
 ```
 
+### `versions\` vs `www\` vs `app`
+
+- **`versions\`** — every app version lives here, always: `versions\<name>\`.
+  One version and ten versions use the *same* folder shape; adding one never moves anything.
+- **`www\`** — the real document root the web server points at (`php -S … -t www`,
+  Apache `DocumentRoot`). It holds only `index.php`, `router.php`, `phpmyadmin\` and the
+  junction below — **never app source code**.
+- **`app`** — not a folder. It is the value of `appAlias` in `config\stack.json`
+  (default `app`): the *name* of the junction inside `www\`, hence the URL path
+  `http://127.0.0.1:8077/app/`.
+
+Switching versions only re-points the junction (`www\app -> versions\<active>`); the old
+version stays on disk, so `aptstack use -` rolls back instantly.
+
 **Rule of thumb:** `templates\` = permanent source · `config\` = generated values ·
 `stack\` = binaries · `versions\` = code · `data\` = database.
 

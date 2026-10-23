@@ -126,7 +126,7 @@ flowchart LR
   F --> G[aptstack doctor]
   G --> H{ผ่าน?}
   H -- yes --> I[ใช้งานได้ / service install]
-  H -- no --> J[aptstack logs apache|mysql|php]
+  H -- no --> J["aptstack logs apache&#124;mysql&#124;php"]
 ```
 
 > ชุด deploy **ไม่เอา** `data\` เดิม, `.git`, `logs\` — server สร้างเองตอน start

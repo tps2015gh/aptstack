@@ -527,6 +527,24 @@ aptstack doctor            <span style="color:#6b7280">:: ต้องไม่�
 ├── logs\  downloads\  bin\
 └── docs\                       คู่มือ (คู่มือ.md/.html, SCENARIO.md, OFFLINE-DEPLOY.md, ...)</code></pre>
 
+<h3><code>versions\</code> ต่างจาก <code>www\</code> ต่างจาก <code>app</code> อย่างไร</h3>
+<ul>
+<li><b><code>versions\</code></b> — ทุกเวอร์ชันของแอปอยู่ที่นี่
+  <b>ไม่ว่าจะมี 1 เวอร์ชันหรือ 10 เวอร์ชันก็อยู่โฟลเดอร์เดียวกัน</b>
+  รูปแบบเดียวคือ <code>versions\&lt;ชื่อเวอร์ชัน&gt;\</code> ไม่มีย้ายไปที่อื่น</li>
+<li><b><code>www\</code></b> — docroot จริงที่ web server ชี้
+  (<code>php -S … -t www</code> และ Apache <code>DocumentRoot</code>)
+  ข้างในมีแค่ <code>index.php</code>, <code>router.php</code>, <code>phpmyadmin\</code> กับ junction —
+  <b>ไม่เคยเก็บโค้ดแอปจริง</b></li>
+<li><b><code>app</code></b> — <b>ไม่ใช่โฟลเดอร์</b> แต่เป็นค่า <code>appAlias</code>
+  ใน <code>config\stack.json</code> (ค่าเริ่มต้น <code>app</code>) คือ <i>ชื่อ</i> ของ junction
+  ใน <code>www\</code> และเป็น URL path <code>/app/</code>
+  (เครื่องนี้เข้าดูได้ที่ <code>http://127.0.0.1:8077/app/</code>)</li>
+</ul>
+<p>สลับเวอร์ชัน = ชี้ junction ใหม่เท่านั้น
+(<code>www\app -&gt; versions\&lt;ที่ใช้อยู่&gt;</code>) เวอร์ชันเดิมยังอยู่บนดิสก์ครบ →
+<code>aptstack use -</code> ย้อนกลับได้ทันที</p>
+
 <div class="box ok">
 <b>กฎทอง:</b> <code>templates\</code> = ต้นฉบับ ·
 <code>config\</code> = ค่าที่ generate ·

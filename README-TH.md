@@ -274,6 +274,18 @@ aptstack\
 └── docs\                     คู่มือ
 ```
 
+### `versions\` ต่างจาก `www\` ต่างจาก `app` อย่างไร
+
+- **`versions\`** — ทุกเวอร์ชันของแอปอยู่ที่นี่ **ไม่ว่าจะมี 1 เวอร์ชันหรือ 10 เวอร์ชัน
+  ก็อยู่โฟลเดอร์เดียวกัน** รูปแบบเดียวคือ `versions\<ชื่อเวอร์ชัน>\` ไม่มีย้ายไปที่อื่น
+- **`www\`** — docroot จริงที่ web server ชี้ (`php -S … -t www` และ Apache `DocumentRoot`)
+  ข้างในมีแค่ `index.php`, `router.php`, `phpmyadmin\` กับ junction — **ไม่เคยเก็บโค้ดแอปจริง**
+- **`app`** — **ไม่ใช่โฟลเดอร์** แต่เป็นค่า `appAlias` ใน `config\stack.json`
+  (ค่าเริ่มต้น `app`) คือ *ชื่อ* ของ junction ใน `www\` และเป็น URL path `/app/`
+
+สลับเวอร์ชัน = ชี้ junction ใหม่เท่านั้น (`www\app -> versions\<ที่ใช้อยู่>`)
+เวอร์ชันเดิมยังอยู่บนดิสก์ครบ → `aptstack use -` ย้อนกลับได้ทันที
+
 **กฎสั้น ๆ**
 
 | โฟลเดอร์ | คืออะไร | แก้ได้? |
@@ -283,6 +295,7 @@ aptstack\
 | `config\php.ini`, `my.ini` | ของ generate | ❌ ห้ามแก้ (หายทุก restart) |
 | `stack\` | binary | ❌ |
 | `versions\` | โค้ดแอป | ✅ |
+| `www\` | docroot (มีแค่ router/index/phpmyadmin + junction `app`) | ❌ ไม่เก็บโค้ดแอป |
 | `data\` | ฐานข้อมูล | ❌ ยกเว้น backup |
 
 ---
