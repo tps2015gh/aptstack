@@ -1222,7 +1222,7 @@ function Cmd-List {
     foreach ($a in $apps) {
         $mark = if ($cur -eq $a.Name) { '*' } else { ' ' }
         $flag = if ($a.Usable) { '' } else { '  <- ไม่มี index.php' }
-        Write-Host "   $mark $($a.Name)$flag" -ForegroundColor $(if ($flag) { 'Yellow' } else { 'Gray' })
+        Write-Host "   $mark $($a.Name)  $($a.Dir)$flag" -ForegroundColor $(if ($flag) { 'Yellow' } else { 'Gray' })
     }
 
     $phps = @(Get-PhpVersions)
@@ -1254,6 +1254,17 @@ function Cmd-List {
     Write-Host "  HTTP    : http://127.0.0.1:$($cfg.httpPort)/$($cfg.appAlias)/"
     Write-Host "  MySQL   : 127.0.0.1:$($cfg.dbPort)"
     Write-Host "  Service : $(if (Get-Service -Name $cfg.serviceName -EA SilentlyContinue) { $cfg.serviceName } else { '(ยังไม่ติดตั้ง)' })"
+
+    Write-Head 'โฟลเดอร์ (วาง/ลบ/จัดการ ได้ที่นี่)'
+    Write-Info "root        : $Root"
+    Write-Info "app versions: $($Script:P.Versions)   <- วาง/ลบ app versions ที่นี่ (เช่น 1.2.0\)"
+    Write-Info "www (docroot): $($Script:P.Www)  มี junction $($cfg.appAlias) -> versions\<active>"
+    Write-Info "PHP         : $($Script:P.PhpRoot)     <- aptstack add php <zip>"
+    Write-Info "Apache      : $($Script:P.ApacheRoot)  <- aptstack add apache <zip>"
+    Write-Info "MySQL       : $($Script:P.MySqlRoot)   <- aptstack add mysql <zip>"
+    Write-Info "config      : $($Script:P.ConfigDir)   (stack.json, vhosts.json, certs\)"
+    Write-Info "database    : $($Script:P.Data)   (datadir + dumps\)"
+    Write-Info "logs        : $($Script:P.Logs)         <- aptstack logs <kind>"
 }
 
 # ---------------------------------------------------------------- doctor
