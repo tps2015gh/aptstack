@@ -49,7 +49,7 @@
 | 19 | `doctor` flag `examples/seed.sql` ว่า leak | ยกเว้น `examples/*` |
 | 20 | `seed` รายงานเลขแถวผิด label (2 SELECT ในไฟล์เดียว) | รายงานเลขทุกตาราง |
 | 21 | `sysinfo` CPU/RAM ไม่แสดงบนเครื่องไม่มี `wmic` (Win11 24H2) | เปลี่ยนเป็น PowerShell CIM |
-| 22 | ชื่อระบบจริง `app` อยู่ใน docs/โค้ด 8 ไฟล์ | แทนด้วย `app` + ตรวจซ้ำ = 0 |
+| 22 | ชื่อ/alias ระบบจริง หลงอยู่ใน docs/โค้ด 8 ไฟล์ | แทนด้วย `app` + ตรวจซ้ำ = 0 |
 | 23 | `dist/*.zip` หลุดเข้า track | `/dist/` ใน gitignore + `git rm --cached` |
 | 24 | release มี zip เก่าปน | ลบ asset เก่า เหลือเฉพาะรุ่นปัจจุบัน |
 | 25 | เครดิต "ทีม Hermes" ผิด | แก้เป็น "เจ้าของสร้างเองเริ่มจาก 0 ด้วย AI บน Hermes" |

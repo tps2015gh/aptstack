@@ -15,7 +15,7 @@
 | ตรวจ version floor | `Get-PhpRisk` เทียบ 8.5.12/8.4.27/8.3.36/8.2.35 (±ฝั่ง fail ทดสอบกับ 8.1.34 ด้วย) |
 | ตรวจ path ชี้นอก bundle | regex ทุกค่า `X:\...` ใน `my.ini`/`php.ini` เทียบกับ root |
 | ตรวจของ sensitive หลุด git | `git ls-files` + pattern `stack/versions/data/config/*.sql` (+ ยกเว้น `examples/*`) |
-| ตรวจชื่อระบบจริงในไฟล์ track | grep `app|app_db` = **0 ผล** |
+| ตรวจชื่อระบบจริงในไฟล์ track | grep ชื่อ/รหัส/ชื่อ DB เดิมของระบบงาน = **0 ผล** |
 | ตรวจ TLS | อ่าน cert ด้วย `X509Certificate2` (subject/expiry/private key/trust) + `openssl s_client` handshake จริง + HTTP probe จริง |
 | ตรวจ network exposure | `bind-address` ใน my.ini + พอร์ตฟังเฉพาะ localhost ไหม |
 | หลัง patch | ตรวจ `logs\php-error.log` หา IOC (memory-limit error) |

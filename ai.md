@@ -42,7 +42,7 @@
    จะโยน `NativeCommandError` → ต้อง wrap ด้วย `EAP='Continue'` ชั่วคราว
 6. **อย่า pipe string เข้า process ไทย** (`Get-Content | mysql`) → โดน encode ตาม codepage
    เป็น `???` → ใช้ `Start-Process -RedirectStandardInput <file>`
-7. **ชื่อระบบจริง** (`app`, URL ระบบงาน) ห้ามอยู่ในไฟล์ที่ track — default alias คือ `app`
+7. **ชื่อ/alias ระบบจริงของระบบงานใด ๆ** (รวมชื่อโฟลเดอร์เดิม, URL ระบบงาน, ชื่อ DB เดิม) ห้ามอยู่ในไฟล์ที่ track — default alias คือ `app`
 
 ## 4. เพิ่มคำสั่งใหม่ (checklist)
 
@@ -101,7 +101,7 @@ Invoke-WebRequest http://127.0.0.1:8077/app/ -UseBasicParsing
 ```
 
 **อย่า** commit `data\` (ข้อมูลจริง), `stack\` (binary), หรือไฟล์ที่มีชื่อระบบจริง
-ก่อน commit รัน: `git status --short` + ตรวจ grep `app` = 0 ผล
+ก่อน commit รัน: `git status --short` + grep ชื่อ/รหัส/URL ของระบบงานจริงต้องได้ 0 ผล
 
 ## 9. เอกสารอื่นที่ต้อง sync เมื่อเปลี่ยนพฤติกรรม
 

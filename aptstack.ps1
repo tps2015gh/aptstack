@@ -504,6 +504,10 @@ function New-PhpIni($phpDir) {
     if (Test-Path $hardTpl) {
         $hard = Get-Content $hardTpl -Raw -Encoding UTF8
         $hard = $hard.Replace('{{LOGS}}', ($Script:P.Logs -replace '\\', '/'))
+        # session.save_path อยู่ใน bundle -> สลับ PHP/สลับโหมดรัน (service <-> manual) แล้วยังใช้ session เดิมได้
+        $sessDir = Join-Path $Script:P.Runtime 'sessions'
+        if (-not (Test-Path $sessDir)) { New-Item -ItemType Directory -Path $sessDir -Force | Out-Null }
+        $hard = $hard.Replace('{{SESSIONS}}', ($sessDir -replace '\\', '/'))
         $content += "`r`n`r`n; ============================================================`r`n"
         $content += "; aptstack security overrides - REGENERATED, do not edit here`r`n"
         $content += "; แก้ถาวรที่ templates\php-hardening.ini`r`n"
@@ -739,6 +743,8 @@ function Start-Web($cfg) {
             Write-Info 'ลอง: aptstack use php 8.3.36 หรือ add PHP แบบ Win32-vs16-x64 (ไม่ใช่ -nts-)'
             return $false
         }
+        # generate php.ini ทุกครั้งที่ start (ไม่ใช่แค่ตอน use php) — กันค่า hardening ใหม่ไม่เข้า
+        $ini = New-PhpIni $php.Dir
         $conf = New-HttpdConf $cfg $php $apache
         # native โปรแกรมเขียนลง stderr -> ต้องหยุด EAP=Stop ไม่งั้นโยน exception แทนที่จะรายงานสวยๆ
         $oldEap = $ErrorActionPreference
