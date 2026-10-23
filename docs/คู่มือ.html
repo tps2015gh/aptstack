@@ -69,7 +69,7 @@ HTTPS/vhost → Service → backup</p>
 <div class="nav">
   <b>เนื้อหา:</b>
   <a href="#s0">คืออะไร</a><a href="#s1">เริ่มใช้</a><a href="SCENARIO.md">Scenario ยาว</a><a href="#s2">คำสั่ง</a>
-  <a href="#s3">สลับเวอร์ชัน</a><a href="#s4">สลับ PHP</a><a href="#s4b">สลับ Apache/MySQL</a><a href="#s5">XAMPP</a><a href="#s5a">HTTPS</a><a href="#s5b">vhosts</a><a href="#s5c">clone/remove</a>
+  <a href="#s3">สลับเวอร์ชัน</a><a href="#s4">สลับ PHP</a><a href="#s4b">สลับ Apache/MySQL</a><a href="#s4b2">import</a><a href="#s5">XAMPP</a><a href="#s5a">HTTPS</a><a href="#s5b">vhosts</a><a href="#s5c">clone/remove</a>
   <a href="#s6">Service</a><a href="#s6b">dev/prod</a><a href="#s6c">console</a><a href="diagrams.md">ไดอะแกรม</a><a href="#s7">ย้าย server</a><a href="#s8">แก้ปัญหา</a>
   <a href="#s9">ความปลอดภัย</a><a href="#s10">โครงสร้าง</a>
 </div>
@@ -142,6 +142,7 @@ aptstack add php &lt;zip|url&gt;       หรือส่ง URL/path เอง
 aptstack add apache &lt;ver|url|zip&gt;  เพิ่ม Apache (เช่น 2.4.69) -&gt; stack\apache\&lt;ver&gt;
 aptstack add mysql &lt;ver|zip&gt;     เพิ่ม MySQL/MariaDB -&gt; stack\mysql\&lt;ver&gt;
 aptstack seed                    สร้าง database ตัวอย่าง (greetings + todo_items)
+aptstack import &lt;file.sql|.sql.zip&gt; [dbname]   import dump ของแอปตัวเอง
 aptstack report                  สร้างหน้า HTML สรุปสถานะ (เปิดให้ + พิมพ์ได้ Ctrl+P)
 
 aptstack use                     เมนูเลือก (แอป + PHP) กดเลข + Enter
@@ -247,15 +248,52 @@ aptstack doctor</code></pre>
 </div>
 
 <h2 id="s4b2">4b2. import SQL เข้า database</h2>
-<pre><code>aptstack import D:\dump\myapp.sql
-aptstack import D:\dump\myapp.sql.zip myapp
-aptstack import                 <span style="color:#6b7280">:: usage</span></code></pre>
-<ul>
-<li>รับ <code>.sql</code> และ <code>.sql.zip</code> · สร้าง DB ให้ถ้ายังไม่มี</li>
-<li>ถ้าไฟล์มี <code>USE อื่น</code> → บังคับเป็น dbname ปลายทาง (กันลงผิด db)</li>
-<li>stdin file ไม่ pipe → ไทยไม่พัง · ตรวจตารางหลัง import</li>
-<li>ต้นแบบ: db_manager.go (win-devops-toolkit-2026)</li>
-</ul>
+<p>ใช้ตอนมี dump ของแอปตัวเอง แล้วยัดเข้า MariaDB ใน bundle</p>
+<pre><code>aptstack start
+
+aptstack import D:\deploy\myapp.sql
+aptstack import D:\deploy\myapp.sql.zip myapp    <span style="color:#6b7280">:: สร้าง db ให้ถ้ายังไม่มี</span>
+aptstack import                                    <span style="color:#6b7280">:: usage</span></code></pre>
+<table>
+<tr><th>ทำอะไรได้</th><th></th></tr>
+<tr><td>ไฟล์</td><td><code>.sql</code> หรือ <code>.sql.zip</code></td></tr>
+<tr><td>สร้าง DB</td><td><code>CREATE DATABASE IF NOT EXISTS</code> ให้เอง</td></tr>
+<tr><td><code>USE</code> ผิดตัว</td><td>บังคับเป็นชื่อปลายทาง (กันลงผิด db)</td></tr>
+<tr><td>ไทย</td><td>stdin ไม่ pipe → ไม่เป็น <code>???</code></td></tr>
+<tr><td>ตรวจจบ</td><td>ต้องเห็นตารางจริงใน db ปลายทาง</td></tr>
+</table>
+
+<h3>ขั้นตอนหลังได้ dump จากเครื่องเก่า</h3>
+<pre><code>aptstack start
+aptstack import E:\staging\lands_auth.sql lands_auth
+aptstack add app E:\staging\app-build.zip lands-1.0
+aptstack use lands-1.0
+aptstack restart</code></pre>
+
+<h3>PHP ผูกกับ table</h3>
+<p>อ่าน <code>config\stack.json</code> แล้วต่อ PDO (ตัวอย่างจริง:
+<code>examples\todo-app\index.php</code>) — <b>dbname</b> ต้องตรงกับที่ import ·
+<b>port/user/pass</b> อ่านจาก config ห้าม hardcode</p>
+<pre><code>$cfg = json_decode(file_get_contents($root . '/config/stack.json'), true);
+$pdo = new PDO(
+    sprintf('mysql:host=127.0.0.1;port=%d;dbname=%s;charset=utf8mb4',
+        (int)$cfg['dbPort'], 'lands_auth'),
+    $cfg['dbUser'], $cfg['dbPass'],
+    [PDO::ATTR_ERRMODE =&gt; PDO::ERRMODE_EXCEPTION]
+);</code></pre>
+
+<h3>ปัญหาบ่อย</h3>
+<table>
+<tr><th>อาการ</th><th>แก้</th></tr>
+<tr><td>Database ยังไม่รัน</td><td><code>aptstack start</code></td></tr>
+<tr><td>import จบแต่ไม่เห็นตาราง</td><td>dbname ไม่ตรง / dump มี <code>USE</code> อื่น → ดู WARN</td></tr>
+<tr><td>ไทย = ???</td><td>ใช้ <code>aptstack import</code> (ห้าม pipe)</td></tr>
+<tr><td>PHP ต่อไม่ได้</td><td>port ใน config vs PHP ต้องตรง · <code>aptstack status</code></td></tr>
+</table>
+
+<p>เทียบ: <code>seed</code> = ตัวอย่าง · <code>import</code> = dump ตัวเอง ·
+<code>backup</code> = ออก · <code>migrate</code> = ย้าย engine ·
+ต้นแบบ db_manager.go</p>
 
 <h2 id="s4c">4c. short_open_tag (แอป CI3 / โค้ด &lt;? เก่า)</h2>
 <p>แอป CodeIgniter 3 ชอบใช้ <code>&lt;?</code> — ถ้าปิดจะขึ้น
