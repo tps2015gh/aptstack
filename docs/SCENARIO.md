@@ -238,22 +238,33 @@ PHP:
 
 ## 7. เพิ่มแอปของตัวเอง
 
+> ⚠️ **`add app` = COPY ไม่ใช่ link และไม่ใช่ย้ายไฟล์**
+> - จาก**โฟลเดอร์** → robocopy ทั้งโฟลเดอร์เข้า `versions\<ชื่อ>` → ต้นทางอยู่ครบ
+> - จาก**zip** → แตกไฟล์เข้า `versions\<ชื่อ>`
+> - **ไม่มีการย้าย** และ **ไม่ได้แค่แก้ config** — ได้ "สำเนา" มาอยู่ใน bundle
+> - ต่อมา `use` ค่อยสร้าง **junction** `www\app` → `versions\<ตัวที่ใช้>` (ชี้ภายใน bundle เท่านั้น)
+> - ระบบเขียน 2 ไฟล์เล็กในโฟลเดอร์แอป: `.aptstack-version` (family/version) +
+>   `.aptstack-source` (ที่มา) — copy ไปด้วย ไม่กระทบแอป
+
 ```cmd
-:: จากโฟลเดอร์ (dev แล้วเอาลง)
+:: จากโฟลเดอร์ (dev แล้วเอาลง) -> ได้ versions\myapp-build123 (สำเนา)
 aptstack add app C:\src\myapp-build123
 
-:: จากโฟลเดอร์ + ตั้งชื่อเอง
+:: จากโฟลเดอร์ + ตั้งชื่อเอง -> ได้ versions\myapp-1.3.0
 aptstack add app C:\src\myapp myapp-1.3.0
 
-:: จาก zip
+:: จาก zip -> แตกไฟล์เข้า versions\
 aptstack add app C:\deploy\myapp-1.3.0.zip
 
-:: หรือวางเอง:  copy โฟลเดอร์เข้า versions\ ตรง ๆ แล้ว aptstack list
+:: หรือวางเอง:  copy โฟลเดอร์เข้า versions\ ตรง ๆ แล้ว aptstack list ก็เห็น
 ```
 
 แล้วสลับไป: `aptstack use myapp-1.3.0`
 
 > ถ้าแอปผูกกับ path (เช่น CodeIgniter `base_url`) ให้ตรวจว่าชี้ host/port ที่ใช้จริง
+>
+> **ล้างของเก่า:** เปลี่ยนไปตัวอื่นก่อน (`use <ชื่ออื่น>`) แล้ว `aptstack remove app <ชื่อ>`
+> (ถามยืนยัน · ตัวที่ active ลบไม่ได้ · ของจริงถูกลบถาวรไม่ลง recycle bin)
 
 ---
 
