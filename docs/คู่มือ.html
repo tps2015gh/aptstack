@@ -134,11 +134,12 @@ walkthrough เต็ม → <a href="SCENARIO.md">docs/SCENARIO.md</a>
 <pre><code>aptstack init                    เตรียมโครงสร้าง (versions\ ว่าง -&gt; ลงตัวอย่างให้)
 aptstack samples                 ติดตั้งตัวอย่างทั้งหมด (hello / todo / sysinfo)
 aptstack list (ls, l)            ดู version + path เต็ม + ที่มา (from:) + แผนที่โฟลเดอร์
+aptstack list --available [php|mysql|apache]   ดูรายการที่ "โหลดได้" จากเว็บ (ออนไลน์)
 
 aptstack add app &lt;folder|zip&gt; [ชื่อ]  เพิ่มเวอร์ชันแอป -&gt; versions\&lt;ชื่อ&gt;
 aptstack add php 8.3.36          เติม URL ทางการ + โหลด + ติดตั้ง (latest ก็ได้)
 aptstack add php &lt;zip|url&gt;       หรือส่ง URL/path เอง
-aptstack add apache &lt;url|zip&gt;    เพิ่ม Apache     -&gt; stack\apache\&lt;ver&gt;
+aptstack add apache &lt;ver|url|zip&gt;  เพิ่ม Apache (เช่น 2.4.69) -&gt; stack\apache\&lt;ver&gt;
 aptstack add mysql &lt;ver|zip&gt;     เพิ่ม MySQL/MariaDB -&gt; stack\mysql\&lt;ver&gt;
 aptstack seed                    สร้าง database ตัวอย่าง (greetings + todo_items)
 aptstack report                  สร้างหน้า HTML สรุปสถานะ (เปิดให้ + พิมพ์ได้ Ctrl+P)
@@ -174,6 +175,11 @@ aptstack migrate mysql &lt;ใหม่&gt;    โยกข้อมูล DB �
 aptstack service install         ลง Windows Service (ต้อง admin)
 aptstack service uninstall       ถอน
 aptstack service start|stop|status</code></pre>
+
+<div class="box"><code>add apache 2.4.69</code> ระบบไปดึง URL จาก Apache Lounge ให้เอง —
+แต่ Lounge เก็บ <b>เฉพาะ build ล่าสุด</b> ถ้าเป็นเวอร์ชันเก่าที่เลิกแล้ว ให้ส่ง URL เต็ม / path แทน
+(<code>add mysql 11.4.13</code> ใช้ archive.mariadb.org · <code>add php</code> มีทั้ง releases + archives)</div>
+
 <p>ทางลัด: <code>as list</code> = <code>aptstack list</code></p>
 
 <h2 id="s3">3. เปลี่ยนเวอร์ชันแอป (สำคัญที่สุด)</h2>

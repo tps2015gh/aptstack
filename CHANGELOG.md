@@ -28,6 +28,15 @@
   ปฏิเสธตัวที่ active · กัน path traversal · datadir ต้องพิมพ์ `DELETE` (2 ชั้น)
 - **`aptstack migrate mysql <ใหม่>`** — โยกข้อมูลไป engine ใหม่ (dump → switch → restore)
 - **`-h` / `-?` / `--help`** → โชว์ help
+- **`aptstack add apache <version>`** — ใส่แค่เลขเวอร์ชัน (เช่น `2.4.69` หรือ `latest`) ระบบไป
+  **scrape หน้า Apache Lounge** แล้วเติม URL + โหลด + ติดตั้งให้ในคำสั่งเดียว
+  · ข้อจำกัด: Lounge เก็บ **เฉพาะ build ล่าสุด** และชื่อไฟล์มีเลข build
+  (`httpd-2.4.69-261002-Win64-VS18.zip`) → เวอร์ชันเก่าที่เลิกแล้วต้องส่ง URL เต็ม/path เอง
+- **`aptstack list --available [php|mysql|apache]`** — ดูรายการเวอร์ชันที่ *ยังโหลดได้* จากเว็บทางการ
+  (windows.php.net releases+archives · archive.mariadb.org · Apache Lounge) แสดง **ตัวใหม่สุดต่อสาขา**
+  พร้อมแท็กผ่าน/ไม่ผ่านช่องโหว่ RCE (ใช้ `Get-PhpRisk` เดิม) + `* มีในเครื่องแล้ว`
+  · ไม่มี kind = โชว์ครบทั้ง 3 · รับทั้ง `--available` กับ `available` (ต้อง declare switch ใน param
+  เพราะ PS โยน parameter binding error ก่อนถึง dispatch เหมือนเคส `-h`)
 - **Web console** `www/aptstack-console/` (localhost only) — start/stop/status/doctor/list/size/
   samples/seed/report/logs + switch app/PHP จากเบราว์เซอร์ · IP gate + CSRF + command whitelist
   · dangerous cmds (remove/clone/migrate/service/tls import) ใช้ CLI เท่านั้น
@@ -45,6 +54,12 @@
 - `git init`: git เขียน warning ลง stderr → EAP=Stop โยน exception → กด EAP Continue
 - `service install`: ตรวจพอร์ตถูกจอง (manual ยังรันอยู่) → เตือน/ถามก่อนติดตั้ง
 - `size`: drive free ไม่ขึ้น (Get-PSDrive ต้องตัด `:` ออกจาก drive name)
+- `add mysql latest` / `add apache latest`: ค่า default `8.3.36` ของ PHP ถูก apply กับ **ทุก kind**
+  → สร้าง URL ผิด (`mariadb-8.3.36-...`) · ย้าย default เข้า branch `php` · `latest` ของ MariaDB
+  ตอนนี้ตอบกลับชัดเจนว่าต้องระบุเลขเวอร์ชัน
+- **ดาวน์โหลดจาก `apachelounge.com` ล้มเหลว** บน PS5.1 (`Invoke-WebRequest` = "Operation is not
+  valid due to the current state of the object") → **fallback ไป `curl.exe`** ทั้งตอน fetch หน้า
+  และตอนโหลด zip (ไม่มี stream redirection → ไม่ชน NativeCommandError กับ `EAP=Stop`)
 
 ---
 

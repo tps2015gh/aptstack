@@ -26,6 +26,9 @@ param(
     [Parameter(Position = 2)][string]$Value,
     [Parameter(Position = 3)][string]$Extra,
     [switch]$NoRestart,
+    # aptstack list --available [php|mysql|apache] -> ดูเวอร์ชันที่โหลดได้ (ต้อง declare ตรงนี้
+    # ไม่งั้น PS โยน parameter binding error ก่อนถึง dispatch เหมือนกรณี -h เดิม)
+    [switch]$Available,
     # aptstack -h / -? -> โชว์ help (PS ไม่รับ --help แต่เราจะดักใน dispatch ให้เอง)
     [Alias('h', '?', 'Help')][switch]$HelpFlag
 )
@@ -1191,13 +1194,46 @@ function Get-DownloadedZip($source) {
         if (-not (Test-Path $zip)) {
             Write-Head "ดาวน์โหลด $source"
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            Invoke-WebRequest -Uri $source -OutFile $zip -UseBasicParsing
+            $err = ''
+            try {
+                Invoke-WebRequest -Uri $source -OutFile $zip -UseBasicParsing -TimeoutSec 600
+            } catch {
+                # mirror บางตัว (เช่น apachelounge.com) คุยกับ Invoke-WebRequest บน PS5.1 ไม่ได้
+                # -> fallback ไป curl.exe (ไม่มี stream redirection -> ไม่ชน NativeCommandError กับ EAP=Stop)
+                $err = "$($_.Exception.Message)"
+                $ok = $false
+                if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+                    $p = Start-Process -FilePath 'curl.exe' -ArgumentList @('-sL', '--fail', '--max-time', '600', '-A', 'aptstack', "`"$source`"", '-o', "`"$zip`"") -Wait -PassThru -NoNewWindow
+                    if ($p.ExitCode -eq 0 -and (Test-Path $zip) -and ((Get-Item $zip -ErrorAction SilentlyContinue).Length -gt 0)) { $ok = $true }
+                }
+                if (-not $ok) {
+                    Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
+                    throw "ดาวน์โหลดไม่สำเร็จ ($err)"
+                }
+            }
             Write-Ok "บันทึกไว้: $zip"
         }
         return $zip
     }
     if (-not (Test-Path $source)) { throw "ไม่พบไฟล์/โฟลเดอร์: $source" }
     return (Resolve-Path $source).Path
+}
+
+# โหลดหน้าเว็บเป็นข้อความ — curl.exe ก่อน (มี mirror ที่ IWR ใช้ไม่ได้) แล้วค่อย fallback IWR
+function Get-WebText([string]$Uri) {
+    if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+        $tmp = Join-Path ([IO.Path]::GetTempPath()) ("aptstack-" + [Guid]::NewGuid().ToString('N') + ".html")
+        try {
+            $p = Start-Process -FilePath 'curl.exe' -ArgumentList @('-sL', '--max-time', '40', '-A', 'aptstack', "`"$Uri`"", '-o', "`"$tmp`"") -Wait -PassThru -NoNewWindow
+            if ($p.ExitCode -eq 0 -and (Test-Path $tmp)) { return [IO.File]::ReadAllText($tmp) }
+        } catch { } finally {
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        }
+    }
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        return (Invoke-WebRequest -Uri $Uri -UseBasicParsing -TimeoutSec 40).Content
+    } catch { return $null }
 }
 
 function Expand-AndFlatten($zip, $dest) {
@@ -1213,17 +1249,32 @@ function Expand-AndFlatten($zip, $dest) {
 # ---------------------------------------------------- official URL + source
 function Get-OfficialUrls([string]$kind, [string]$ver) {
     # คืน URL ทางการเป็น list (ลองทีละอัน — PHP มี releases กับ archives)
-    if ($ver -eq 'latest' -or -not $ver) { $ver = '8.3.36' }   # ค่าผ่านเกณฑ์ security-php.txt
     switch ("$kind".ToLower()) {
         'php' {
+            if ($ver -eq 'latest' -or -not $ver) { $ver = '8.3.36' }   # ค่าผ่านเกณฑ์ security-php.txt
             $base = "php-$ver-Win32-vs16-x64.zip"   # Thread Safe x64 เสมอ
             return @(
                 "https://windows.php.net/downloads/releases/$base",
                 "https://windows.php.net/downloads/releases/archives/$base"
             )
         }
-        'mysql' { return @("https://archive.mariadb.org/mariadb-$ver/winx64-packages/mariadb-$ver-winx64.zip") }
-        default { return @() }   # apache: ชื่อไฟล์มีเลข build -> เติมให้ไม่ได้
+        'mysql' {
+            if ($ver -eq 'latest' -or -not $ver) { return @() }   # MariaDB ไม่มี latest -> ต้องระบุเลข
+            return @("https://archive.mariadb.org/mariadb-$ver/winx64-packages/mariadb-$ver-winx64.zip")
+        }
+        'apache' {
+            # Apache Lounge เผยแพร่เฉพาะ build ล่าสุด และชื่อไฟล์มีเลข build
+            # (httpd-2.4.69-261002-Win64-VS18.zip) -> แปลงเลขเวอร์ชันเป็น URL โดย scrape หน้าโหลดจริง
+            $page = Get-WebText 'https://www.apachelounge.com/download/'
+            if (-not $page) { return @() }
+            $want = if ($ver -and $ver -ne 'latest') { [regex]::Escape($ver) } else { '[\d\.]+' }
+            $m = [regex]::Match($page, ('href="([^"]*httpd-' + $want + '-\d+-Win64-VS\d+\.zip)"'), [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            if (-not $m.Success) { return @() }   # เวอร์ชันนั้นไม่อยู่ในหน้า (Lounge เก็บแค่ตัวล่าสุด)
+            $href = $m.Groups[1].Value
+            if ($href -notmatch '^https?://') { $href = 'https://www.apachelounge.com' + $href }
+            return @($href)
+        }
+        default { return @() }
     }
 }
 
@@ -1267,8 +1318,12 @@ function Cmd-Add($kind, $source, $extra) {
     if ($isBinary -and ($source -eq 'latest' -or $source -match '^\d{1,2}\.\d{1,2}(\.\d{1,2})?$')) {
         $candidates = @(Get-OfficialUrls $kind $source)
         if ($candidates.Count -eq 0) {
-            $page = if ("$kind".ToLower() -eq 'apache') { '  หน้าดาวน์โหลด: https://www.apachelounge.com/download/' } else { '' }
-            throw "$kind เติม URL อัตโนมัติไม่ได้ (ชื่อไฟล์มีเลข build) — ส่ง URL เต็มหรือ path มา.$page"
+            $hint = switch ("$kind".ToLower()) {
+                'apache' { '  Apache Lounge เก็บเฉพาะ build ล่าสุด -> ดูหน้าโหลด https://www.apachelounge.com/download/ แล้วส่ง URL เต็ม หรือใช้ไฟล์ที่โหลดไว้แล้ว (docs\OFFLINE-DEPLOY.md)' }
+                'mysql'  { '  MariaDB ไม่มี latest -> ใส่เลขเวอร์ชันที่มีจริง เช่น 11.4.13 หรือส่ง URL/path' }
+                default  { '' }
+            }
+            throw "$kind เติม URL อัตโนมัติไม่ได้สำหรับ '$source' — ส่ง URL เต็ม / path / เลขเวอร์ชันแทน.$hint"
         }
         Write-Head "เติม URL ทางการให้ ($kind $source)"
         foreach ($u in $candidates) { Write-Info $u }
@@ -1439,6 +1494,104 @@ function Cmd-List {
     Write-Info "config      : $($Script:P.ConfigDir)   (stack.json, vhosts.json, certs\)"
     Write-Info "database    : $($Script:P.Data)   (datadir + dumps\)"
     Write-Info "logs        : $($Script:P.Logs)         <- aptstack logs <kind>"
+}
+
+# list --available [php|mysql|apache] — ดูเวอร์ชันที่ "โหลดได้" จากเว็บทางการ (ยังไม่ต้องติดตั้ง)
+function Cmd-ListAvailable([string]$kind) {
+    $kind = ("$kind".ToLower() -replace '^\-\-?', '')
+    if (-not $kind) { $kind = 'all' }
+    if (@('all', 'php', 'mysql', 'apache') -notcontains $kind) {
+        throw "ไม่รู้จัก '$kind' — ใช้: aptstack list --available [php|mysql|apache]"
+    }
+
+    if ($kind -eq 'all' -or $kind -eq 'php') {
+        $found = @{}
+        $pages = @(
+            'https://windows.php.net/downloads/releases/',
+            'https://windows.php.net/downloads/releases/archives/'
+        )
+        foreach ($page in $pages) {
+            $html = Get-WebText $page
+            if (-not $html) { continue }
+            foreach ($m in [regex]::Matches($html, 'php-(\d+\.\d+\.\d+)-Win32-vs\d+-x64\.zip')) {
+                $found[$m.Groups[1].Value] = $page   # Thread Safe x64 เท่านั้น (ตัด -nts- ออกอัตโนมัติ)
+            }
+        }
+        $installed = @(Get-PhpVersions | ForEach-Object { $_.Version })
+        Write-Head 'PHP ที่โหลดได้ (Thread Safe x64 — ตัวใหม่สุดของแต่ละสาขา)'
+        if ($found.Count -eq 0) {
+            Write-Warn2 'ดึงรายการไม่ได้ (ไม่มีเน็ต? หรือ windows.php.net ล่ม) — retry ได้'
+        } else {
+            $best = @{}
+            foreach ($v in $found.Keys) {
+                $br = ($v -split '\.')[0..1] -join '.'
+                if (-not $best.ContainsKey($br) -or ([version]$v -gt [version]$best[$br])) { $best[$br] = $v }
+            }
+            foreach ($br in ($best.Keys | Sort-Object -Property { [version]$_ } -Descending)) {
+                $v = $best[$br]
+                $risk = Get-PhpRisk $v
+                $tag = if ($risk -eq 'EOL') { 'EOL — ห้ามใช้ production' }
+                       elseif ($risk -eq 'UNPATCHED') { 'ยังไม่ผ่านช่องโหว่ RCE' }
+                       else { 'ผ่าน floor ความปลอดภัย' }
+                $mark = if ($installed -contains $v) { '   * มีในเครื่องแล้ว' } else { '' }
+                Write-Host ("   {0,-9} {1}{2}" -f $v, $tag, $mark) -ForegroundColor $(if ($risk) { 'Yellow' } else { 'Green' })
+            }
+            Write-Info "พบทั้งหมด $($found.Count) เวอร์ชัน (แสดงตัวใหม่สุดต่อสาขา) · ใส่เลขเต็มก็ได้: aptstack add php 8.4.27"
+            Write-Info "หน้าทางการ: $($pages[0]) · $($pages[1])"
+        }
+    }
+
+    if ($kind -eq 'all' -or $kind -eq 'mysql') {
+        $html = Get-WebText 'https://archive.mariadb.org/'
+        $found = @{}
+        if ($html) {
+            foreach ($m in [regex]::Matches($html, 'mariadb-(\d+\.\d+\.\d+)/')) { $found[$m.Groups[1].Value] = $true }
+        }
+        $installed = @(Get-MySqlVersions | ForEach-Object { $_.Version })
+        Write-Head 'MariaDB ที่โหลดได้ (ตัวใหม่สุดของแต่ละสาขา x.y)'
+        if ($found.Count -eq 0) {
+            Write-Warn2 'ดึงรายการไม่ได้ (ไม่มีเน็ต? หรือ archive.mariadb.org ล่ม)'
+        } else {
+            $best = @{}
+            foreach ($v in $found.Keys) {
+                $mj = [int](($v -split '\.')[0])
+                if ($mj -lt 10) { continue }   # เก่ากว่า 10.x ไม่ list (คลังมี 400+ ตัว)
+                $br = ($v -split '\.')[0..1] -join '.'
+                if (-not $best.ContainsKey($br) -or ([version]$v -gt [version]$best[$br])) { $best[$br] = $v }
+            }
+            foreach ($br in ($best.Keys | Sort-Object -Property { [version]$_ } -Descending)) {
+                $v = $best[$br]
+                $mark = if ($installed -contains $v) { '   * มีในเครื่องแล้ว' } else { '' }
+                Write-Host ("   {0,-10} {1}" -f $v, $mark) -ForegroundColor Gray
+            }
+            Write-Info "พบทั้งหมด $($found.Count) เวอร์ชันในคลัง (แสดงตัวใหม่สุดต่อสาขา) · ติดตั้ง: aptstack add mysql 11.4.13"
+            Write-Info 'หน้าทางการ: https://archive.mariadb.org/'
+        }
+    }
+
+    if ($kind -eq 'all' -or $kind -eq 'apache') {
+        $html = Get-WebText 'https://www.apachelounge.com/download/'
+        $found = @{}
+        if ($html) {
+            foreach ($m in [regex]::Matches($html, 'httpd-(\d+\.\d+\.\d+)-\d+-Win64-VS\d+\.zip', [Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+                $found[$m.Groups[1].Value] = $true
+            }
+        }
+        $installed = @(Get-ApacheVersions | ForEach-Object { $_.Version })
+        Write-Head 'Apache ที่โหลดได้ (Win64)'
+        if ($found.Count -eq 0) {
+            Write-Warn2 'ดึงรายการไม่ได้ — เปิดดูเอง: https://www.apachelounge.com/download/'
+        } else {
+            foreach ($v in ($found.Keys | Sort-Object -Property { [version]$_ } -Descending)) {
+                $mark = if ($installed -contains $v) { '   * มีในเครื่องแล้ว' } else { '' }
+                Write-Host ("   {0,-9} {1}" -f $v, $mark) -ForegroundColor Gray
+            }
+            Write-Info 'Apache Lounge เก็บเฉพาะ build ล่าสุด — เวอร์ชันเก่าต้องส่ง URL เต็ม/path เอง'
+            Write-Info 'ติดตั้ง: aptstack add apache 2.4.69'
+        }
+    }
+    Write-Host ''
+    Write-Info 'เวอร์ชันที่ติดตั้งแล้วในเครื่องดูด้วย: aptstack list'
 }
 
 # ---------------------------------------------------------------- doctor
@@ -3018,6 +3171,7 @@ function Cmd-Help {
   aptstack add php 8.3.36          เติม URL ทางการให้เอง + โหลด + ติดตั้ง (ใช้ latest ก็ได้)
   aptstack add php <zip|url>       หรือส่ง URL/path เอง
   aptstack list                    ดูที่ติดตั้ง + ที่ใช้อยู่ (มี from: <url> ให้ copy โหลดเองได้)
+  aptstack list --available        ดูเวอร์ชันที่ "โหลดได้" จากเว็บทางการ (php|mysql|apache)
   aptstack start                   เริ่ม MariaDB + Web
   aptstack doctor                  ตรวจสุขภาพ + ช่องโหว่ RCE
 
@@ -3031,7 +3185,7 @@ function Cmd-Help {
   aptstack use apache 2.4.69       สลับ Apache + restart (mod_php)
   aptstack use mysql 11.4.13       สลับ MySQL/MariaDB (datadir แยกต่อ version)
   aptstack add app <folder|zip>    copy version ใหม่ลง แล้ว use เลย
-  aptstack add apache <zip>        เพิ่ม Apache -> stack\apache\
+  aptstack add apache <ver|zip|url> เพิ่ม Apache (เช่น 2.4.69 — โหลดจาก Apache Lounge ให้เอง) -> stack\apache\
   aptstack add mysql <version|zip> เพิ่ม MySQL/MariaDB -> stack\mysql\
 
   ── web / db mode (config\stack.json) ─────────────────
@@ -3109,9 +3263,22 @@ switch ($Command.ToLower()) {
     '/?'          { Cmd-Help }
     '--help'      { Cmd-Help }
     'add'         { Cmd-Add $Action $Value $Extra }
-    'list'        { Cmd-List }
-    'ls'          { Cmd-List }
-    'l'           { Cmd-List }
+    'list'        {
+        # -Available (switch) กิน token `--available` ไป -> kind หลุดมาอยู่ $Action
+        if ($Available) { Cmd-ListAvailable $Action }
+        elseif ($Action -eq 'available' -or $Action -eq '-a') { Cmd-ListAvailable $Value }
+        else { Cmd-List }
+    }
+    'ls'          {
+        if ($Available) { Cmd-ListAvailable $Action }
+        elseif ($Action -eq 'available' -or $Action -eq '-a') { Cmd-ListAvailable $Value }
+        else { Cmd-List }
+    }
+    'l'           {
+        if ($Available) { Cmd-ListAvailable $Action }
+        elseif ($Action -eq 'available' -or $Action -eq '-a') { Cmd-ListAvailable $Value }
+        else { Cmd-List }
+    }
     'use'         { Cmd-Use $Action $Value }
     'u'           { Cmd-Use $Action $Value }
     'next'        { Step-App 1 }

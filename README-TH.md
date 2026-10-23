@@ -74,7 +74,10 @@ phpMyAdmin → **http://127.0.0.1:8077/phpmyadmin/** (ถ้ามีใน `www
 
 > **บน release ที่ดาวน์โหลดมา** จะมีแค่ scripts/templates/docs + `examples\`
 > ต้องใส่ binary เอง — **ใส่แค่เลขเวอร์ชันก็ได้**:
-> `aptstack add php 8.3.36` (ระบบเติม URL ทางการ + โหลด + ติดตั้งให้)
+> `aptstack add php 8.3.36` หรือ `aptstack add apache 2.4.69`
+> (ระบบเติม URL ทางการ + โหลด + ติดตั้งให้ — Apache ไปดึงจาก Apache Lounge
+> ซึ่งเก็บเฉพาะ build ล่าสุด ส่วน `add mysql 11.4.13` ใช้ archive.mariadb.org)
+> ไม่รู้จะใส่เลขอะไร → **ดูรายการที่โหลดได้ก่อน**: `aptstack list --available php`
 > แล้ว `aptstack list` จะโชว์ `from: <url>` ให้ copy โหลดเองภายหลังได้
 > (สายที่ปลอดภัย: 8.3.36 / 8.4.27 / 8.5.12 / 8.2.35)
 >

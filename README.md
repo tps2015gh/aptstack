@@ -132,7 +132,9 @@ are ignored on purpose (this repo is public).
 | `aptstack add app <folder\|zip> [name]` | add app version → `versions\<name>` (name is free-form) |
 | `aptstack add php 8.3.36` | build official URL, download + install (also accepts `latest`) |
 | `aptstack add php <zip\|url>` | or pass your own URL/path |
+| `aptstack add apache 2.4.69` | resolve version → Apache Lounge (latest build only) + download + install |
 | `aptstack list` | installed versions + active one |
+| `aptstack list --available [php\|mysql\|apache]` | fetch what's downloadable online (newest per branch + security tag) |
 | `aptstack use <ver>` | switch app version (+ auto restart) |
 | `aptstack use php <ver>` | switch PHP (+ auto restart) |
 | `aptstack use` | menu (pick by number) |
