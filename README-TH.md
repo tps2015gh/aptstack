@@ -51,6 +51,7 @@ aptstack report     :: สรุปเป็น HTML (พิมพ์ได้)
 cd /d D:\aptstack
 aptstack init             :: สร้างโครงสร้าง + ติดตั้ง "ตัวอย่าง 3 แอป" ให้เอง
 aptstack seed             :: import database ตัวอย่าง (greetings + todo_items)
+aptstack import dump.sql  :: import .sql / .sql.zip ของตัวเอง (สร้าง DB ให้ · ไทยไม่พัง)
 aptstack start            :: เปิด database + web (+ health probe จริง)
 aptstack doctor           :: ตรวจสุขภาพ + ช่องโหว่
 ```

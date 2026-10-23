@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`aptstack import <file.sql|.sql.zip> [dbname]`** — import dump เข้า database
+  · สร้าง DB ให้ (`CREATE DATABASE IF NOT EXISTS`) · แตก `.sql.zip` ให้เอง
+  · ถ้าไฟล์มี `USE อื่น` / `CREATE DATABASE` อื่น → **บังคับชื่อปลายทาง** (กันลงผิด db)
+  · import ผ่าน stdin file (ไม่ pipe) → ตัวหนังสือไทยไม่กลายเป็น `???`
+  · verify หลัง import: ต้องเห็นตารางจริงใน db ปลายทาง
+  · ต้นแบบ: [db_manager.go](https://github.com/tps2015gh/win-devops-toolkit-2026/blob/main/db_manager.go)
+- **`aptstack shorttag [on|off]`** — short_open_tag สำหรับแอป CI3 / โค้ด `<?` เก่า
+  · default = On · `start`/`doctor` โชว์สถานะตั้งแต่แรก
+
 ## 1.3.2 — 2026-10-23
 
 ### Added

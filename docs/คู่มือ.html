@@ -246,6 +246,17 @@ aptstack doctor</code></pre>
 <pre style="margin:8px 0 0"><code>error_reporting(E_ALL &amp; ~E_DEPRECATED &amp; ~E_NOTICE &amp; ~E_STRICT);</code></pre>
 </div>
 
+<h2 id="s4b2">4b2. import SQL เข้า database</h2>
+<pre><code>aptstack import D:\dump\myapp.sql
+aptstack import D:\dump\myapp.sql.zip myapp
+aptstack import                 <span style="color:#6b7280">:: usage</span></code></pre>
+<ul>
+<li>รับ <code>.sql</code> และ <code>.sql.zip</code> · สร้าง DB ให้ถ้ายังไม่มี</li>
+<li>ถ้าไฟล์มี <code>USE อื่น</code> → บังคับเป็น dbname ปลายทาง (กันลงผิด db)</li>
+<li>stdin file ไม่ pipe → ไทยไม่พัง · ตรวจตารางหลัง import</li>
+<li>ต้นแบบ: db_manager.go (win-devops-toolkit-2026)</li>
+</ul>
+
 <h2 id="s4c">4c. short_open_tag (แอป CI3 / โค้ด &lt;? เก่า)</h2>
 <p>แอป CodeIgniter 3 ชอบใช้ <code>&lt;?</code> — ถ้าปิดจะขึ้น
 <b>ParseError: Unclosed &#123;</b></p>

@@ -2550,6 +2550,167 @@ function Cmd-Seed {
     Write-Info 'เปิดดู:  http://127.0.0.1:<port>/<appAlias>/  (hello ดูตาราง greetings · todo ดู todo_items)'
 }
 
+function Get-MysqlClient($cfg) {
+    $hit = Resolve-MySql $cfg.mysql
+    if (-not $hit) { throw 'ไม่พบ MySQL/MariaDB client ใน stack\mysql\ — รัน: aptstack start หรือ add mysql' }
+    foreach ($n in @('bin\mariadb.exe', 'bin\mysql.exe')) {
+        $p = Join-Path $hit.Dir $n
+        if (Test-Path $p) { return $p }
+    }
+    $f = Get-ChildItem $hit.Dir -Recurse -File -Include 'mariadb.exe', 'mysql.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($f) { return $f.FullName }
+    throw 'ไม่พบ mariadb.exe / mysql.exe'
+}
+
+function Invoke-MysqlSql($cfg, [string]$client, [string]$SqlText, [string]$DbName = '') {
+    # รัน SQL ผ่าน stdin string (ไม่เขียนไฟล์กลางถ้าไม่จำเป็น)
+    # สำคัญ: ห้าม pipe string เข้า process — Thai กลายเป็น ??? (encode ตาม OEM codepage)
+    if (-not (Test-Path $Script:P.Tmp)) { New-Item -ItemType Directory -Path $Script:P.Tmp -Force | Out-Null }
+    $tmpIn = Join-Path $Script:P.Tmp 'import-in.sql'
+    $tmpOut = Join-Path $Script:P.Tmp 'import-out.txt'
+    $tmpErr = Join-Path $Script:P.Tmp 'import-err.txt'
+    Write-Utf8NoBom $tmpIn $SqlText
+    $args = @('--skip-ssl', '-h', '127.0.0.1', '-P', "$($cfg.dbPort)", '--protocol=tcp',
+              '--default-character-set=utf8mb4', '-u', $cfg.dbUser, "-p$($cfg.dbPass)")
+    if ($DbName) { $args += $DbName }
+    $args += '--force'
+    $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $p = Start-Process -FilePath $client -ArgumentList $args `
+            -RedirectStandardInput $tmpIn `
+            -RedirectStandardOutput $tmpOut `
+            -RedirectStandardError $tmpErr `
+            -Wait -PassThru -NoNewWindow
+    } finally { $ErrorActionPreference = $old }
+    $out = @(); $err = @()
+    if (Test-Path $tmpOut) { $out = @(Get-Content $tmpOut -Encoding UTF8 -ErrorAction SilentlyContinue) }
+    if (Test-Path $tmpErr) { $err = @(Get-Content $tmpErr -Encoding UTF8 -ErrorAction SilentlyContinue) }
+    return [pscustomobject]@{ ExitCode = [int]$p.ExitCode; Out = $out; Err = $err }
+}
+
+function Cmd-Import([string]$file, [string]$dbName) {
+    # แบบ db_manager.go (win-devops-toolkit): รับ .sql หรือ .sql.zip
+    # - สร้าง database ให้ถ้ายังไม่มี (CREATE DATABASE IF NOT EXISTS)
+    # - import ผ่าน stdin file (ไม่ pipe — กันไทยเป็น ???)
+    # - zip ภายในมี .sql ตัวเดียว => แตกชั่วคราวแล้ว import
+    $cfg = Get-Config
+    if (Test-PortFree $cfg.dbPort) { throw "Database ยังไม่รัน (port $($cfg.dbPort)) — รัน: aptstack start" }
+    if ("$($cfg.dbMode)" -eq 'external') { Write-Warn2 'dbMode=external — import ไปยัง MySQL ภายนอก (XAMPP)' }
+
+    if (-not $file) {
+        $cand = @(Get-ChildItem -Path $Root -File -Include '*.sql', '*.sql.zip' -Recurse -Depth 2 -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch '\\(data|stack|versions|downloads|dist)\\' } |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 15)
+        Write-Head 'import — วิธีใช้'
+        Write-Info 'aptstack import <file.sql|.sql.zip> [dbname]'
+        Write-Info 'aptstack import D:\dump\myapp.sql.zip myapp'
+        if ($cand.Count -gt 0) {
+            Write-Host ''
+            Write-Info 'ไฟล์ .sql/.sql.zip ที่เจอใกล้ ๆ:'
+            foreach ($c in $cand) { Write-Info ("  {0}  ({1:N1} MB)" -f $c.FullName, ($c.Length / 1MB)) }
+        }
+        Write-Host ''
+        Write-Info 'dbName ถ้าไม่ระบุ => ใช้ชื่อไฟล์ (myapp.sql.zip -> myapp)'
+        Write-Info 'หรือถ้าไฟล์มี CREATE DATABASE / USE อยู่แล้ว -> ข้ามขั้นนี้'
+        return
+    }
+
+    # resolve path (relative -> bundle root)
+    $src = $file
+    if ($src -notmatch '^[A-Za-z]:[\\/]') { $src = Join-Path $Root $src }
+    if (-not (Test-Path $src)) { throw "ไม่พบไฟล์: $src" }
+
+    $client = Get-MysqlClient $cfg
+    $isZip = $src.ToLower().EndsWith('.zip')
+
+    # ถ้าไม่ระบุ dbName -> derive จากชื่อไฟล์ (myapp.sql / myapp.sql.zip -> myapp)
+    if (-not $dbName) {
+        $leaf = Split-Path $src -Leaf
+        $dbName = $leaf -replace '\.sql\.zip$', '' -replace '\.sql$', '' -replace '\.zip$', ''
+    }
+    # sanitize: ชื่อ db ห้ามมี path/มีอักขระอันตราย
+    if ($dbName -notmatch '^[A-Za-z0-9_][A-Za-z0-9_$]*$') {
+        throw "ชื่อ database ผิดรูปแบบ: $dbName (ใช้ a-z 0-9 _ ขึ้นต้นด้วยตัวอักษร/เลข)"
+    }
+
+    Write-Head "import SQL -> $dbName"
+    Write-Info "file   : $src ($([math]::Round((Get-Item $src).Length / 1MB, 1)) MB)"
+    Write-Info "client : $client"
+    Write-Info "target : 127.0.0.1:$($cfg.dbPort) / $dbName"
+
+    # 1) สร้าง DB
+    $r0 = Invoke-MysqlSql $cfg $client "CREATE DATABASE IF NOT EXISTS ``$dbName`` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    if ($r0.ExitCode -ne 0) {
+        throw ("CREATE DATABASE ล้มเหลว (exit $($r0.ExitCode)):`n" + (($r0.Err + $r0.Out | Select-Object -First 6) -join "`n"))
+    }
+    Write-Ok "database พร้อม: $dbName (สร้างแล้วถ้าไม่มี)"
+
+    # 2) แตก zip (ถ้ามี) -> เอา .sql ตัวแรก
+    $sqlPath = $src
+    $tmpExtract = $null
+    if ($isZip) {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $tmpExtract = Join-Path $Script:P.Tmp ('import-zip-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tmpExtract -Force | Out-Null
+        try {
+            [IO.Compression.ZipFile]::ExtractToDirectory($src, $tmpExtract)
+        } catch { throw "แตก zip ล้มเหลว: $($_.Exception.Message)" }
+        $sqlFile = Get-ChildItem $tmpExtract -Recurse -File -Filter '*.sql' | Select-Object -First 1
+        if (-not $sqlFile) { throw 'zip ไม่มีไฟล์ .sql ข้างใน' }
+        $sqlPath = $sqlFile.FullName
+        Write-Info "แตกแล้ว: $($sqlFile.Name)"
+    }
+
+    # 3) import — ถ้า dump มี CREATE DATABASE/USE ชื่ออื่น ให้บังคับชื่อปลายทาง
+    #    (seed.sql ของตัวอย่างมี USE aptstack_demo — ถ้าไม่ rewrite จะลงผิด db)
+    $bytes = [IO.File]::ReadAllBytes($sqlPath)
+    $text = [Text.Encoding]::UTF8.GetString($bytes)
+    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
+
+    # NOTE: single-quoted regex — backtick ไม่ถูก escape ใน PS single quote (ใช้ได้กับ `id` ของ MySQL)
+    $useHits = [regex]::Matches($text, '(?im)^\s*USE\s+`?([A-Za-z0-9_]+)`?\s*;')
+    $otherDb = @()
+    foreach ($m in $useHits) {
+        $n = $m.Groups[1].Value
+        if ($n -and ($n -ne $dbName) -and ($n -notin @('mysql', 'information_schema', 'performance_schema', 'sys'))) { $otherDb += $n }
+    }
+    $otherDb = @($otherDb | Select-Object -Unique)
+    if ($otherDb.Count -gt 0) {
+        Write-Warn2 ("ไฟล์มี USE อื่น: " + ($otherDb -join ', ') + ' — บังคับเป็น USE ชื่อปลายทางทุกจุด')
+        foreach ($n in $otherDb) {
+            $text = [regex]::Replace($text, ('(?im)(^\s*USE\s+`?' + [regex]::Escape($n) + '`?\s*;)'), ('USE `' + $dbName + '`;'))
+        }
+    }
+    # บังคับ CREATE DATABASE ให้ชี้ dbName (คง IF NOT EXISTS)
+    $text = [regex]::Replace($text, '(?im)^\s*CREATE\s+DATABASE\s+(IF\s+NOT\s+EXISTS\s+)?`?([A-Za-z0-9_]+)`?',
+        { param($m) 'CREATE DATABASE ' + $m.Groups[1].Value + '`' + $dbName + '`' })
+
+    $r1 = Invoke-MysqlSql $cfg $client $text $dbName
+    if ($tmpExtract -and (Test-Path $tmpExtract)) { Remove-Item $tmpExtract -Recurse -Force -ErrorAction SilentlyContinue }
+
+    if ($r1.ExitCode -ne 0) {
+        Write-Err2 "import อาจไม่สมบูรณ์ (exit $($r1.ExitCode))"
+        $lines = @($r1.Err + $r1.Out) | Where-Object { $_ } | Select-Object -First 8
+        foreach ($l in $lines) { Write-Info "$l" }
+        return
+    }
+
+    # 4) verify: ต้องมีตารางใน dbName จริง
+    $v = Invoke-MysqlSql $cfg $client "SHOW TABLES;" $dbName
+    $tables = @($v.Out | Where-Object { $_ -and $_ -notmatch '^\s*Tables_in' -and $_ -notmatch '^-+$' -and $_ -notmatch '^\s*$' })
+    if ($tables.Count -eq 0) {
+        Write-Warn2 "import exit 0 แต่ยังไม่เห็นตารางใน $dbName"
+        Write-Info 'เปิดไป phpMyAdmin ดูว่า dump ชี้ db ไหน หรือส่ง --dbname ให้ตรง'
+        return
+    }
+    Write-Ok "import สำเร็จ -> $dbName  ($($tables.Count) ตาราง)"
+    Write-Info ("ตาราง: " + (($tables | Select-Object -First 10) -join ', '))
+    $nums = @($r1.Out + $r1.Err | Where-Object { "$_" -match '^\s*\d+\s*$' })
+    if ($nums.Count -gt 0) { Write-Info ("rows ที่ insert: " + (($nums | Select-Object -First 8) -join ', ')) }
+    Write-Info "phpMyAdmin: http://127.0.0.1:$($cfg.httpPort)/phpmyadmin/"
+    Write-Info 'backup: aptstack backup'
+}
+
 # ------------------------------------------------------------- printable report
 # ------------------------------------------------------------- disk / size report
 function Get-DirStat([string]$p) {
@@ -3498,6 +3659,8 @@ function Cmd-Help {
   aptstack status                รวม mapping พอร์ต -> program
   aptstack backup [file.sql]       dump ทุก database ไป data\dumps\
   aptstack seed                    import database ตัวอย่าง (aptstack_demo)
+  aptstack import <file.sql|.sql.zip> [dbname]
+                                   import dump เข้า database (สร้าง DB ให้ · ไทยไม่พัง · แบบ db_manager)
   aptstack logs <apache|mysql|php> ดู log ท้ายไฟล์ (ตัวเลข = กี่บรรทัด, default 50)
   aptstack logs all                ดู log error ทุกตัว
 
@@ -3594,6 +3757,7 @@ switch ($Command.ToLower()) {
     'doctor'      { Cmd-Doctor }
     'backup'      { Cmd-Backup $Action }
     'seed'        { Cmd-Seed }
+    'import'      { Cmd-Import $Action $Value }
     'samples'     { Cmd-Samples }
     'report'      { Cmd-Report $Action }
     'size'        { Cmd-Size }

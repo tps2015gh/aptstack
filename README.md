@@ -145,6 +145,7 @@ are ignored on purpose (this repo is public).
 | `aptstack doctor` | security + health check |
 | `aptstack backup [file]` | dump all databases → `data\dumps\` |
 | `aptstack seed` | import sample database (`aptstack_demo`) |
+| `aptstack import <file.sql\|.sql.zip> [db]` | import dump into database (creates DB, rewrites `USE`, Thai-safe) |
 | `aptstack logs <apache\|mysql\|php\|all> [n]` | tail log files, highlight errors |
 | `aptstack tls status\|init\|import\|off` | HTTPS — self-signed **or real cert** |
 | `aptstack report` | printable HTML status report (checks + probes + **folder sizes / bloat warnings**) |
