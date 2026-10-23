@@ -25,7 +25,9 @@ param(
     [Parameter(Position = 1)][string]$Action,
     [Parameter(Position = 2)][string]$Value,
     [Parameter(Position = 3)][string]$Extra,
-    [switch]$NoRestart
+    [switch]$NoRestart,
+    # aptstack -h / -? -> โชว์ help (PS ไม่รับ --help แต่เราจะดักใน dispatch ให้เอง)
+    [Alias('h', '?', 'Help')][switch]$HelpFlag
 )
 
 $ErrorActionPreference = 'Stop'
@@ -2012,6 +2014,519 @@ function Cmd-Seed {
     Write-Info 'เปิดดู:  http://127.0.0.1:<port>/<appAlias>/  (hello ดูตาราง greetings · todo ดู todo_items)'
 }
 
+# ------------------------------------------------------------- printable report
+function Cmd-Report([string]$OutPath) {
+    # สรุปสถานะการติดตั้งทั้งหมดเป็น HTML สำหรับเปิดดู/พิมพ์เครื่องพิมพ์
+    Ensure-Dirs
+    $cfg = Get-Config
+    $cur = Get-CurrentAppName
+    $php = Resolve-Php $cfg.php
+    $apache = Resolve-Apache $cfg.apache
+    $mysql = Resolve-MySql $cfg.mysql
+    $wm = Resolve-WebMode $cfg $php $apache
+    $apps = @(Get-AppVersions)
+    $phps = @(Get-PhpVersions)
+    $dbs = @(Get-MySqlVersions)
+    $aps = @(Get-ApacheVersions)
+
+    # ---- probe จริง ----
+    $httpP = Invoke-HttpProbe "http://127.0.0.1:$($cfg.httpPort)/" 6
+    $httpsP = $null
+    if ("$($cfg.httpsEnabled)".ToLower() -eq 'true') {
+        $httpsP = Invoke-HttpProbe "https://127.0.0.1:$($cfg.httpsPort)/" 6
+    }
+    $dbPortUp = -not (Test-PortFree $cfg.dbPort)
+    $dbPing = $false
+    if ($dbPortUp -and $mysql) { $dbPing = [bool](Invoke-DbAdmin $mysql @('ping')) }
+    $svc = Get-Service -Name $cfg.serviceName -ErrorAction SilentlyContinue
+
+    # ---- cert ----
+    $certPath = Resolve-CertPath $cfg.certFile
+    $ci = Get-CertInfo $certPath
+    $keyOk = (Test-Path (Resolve-CertPath $cfg.keyFile)) -and
+             ((Get-Content (Resolve-CertPath $cfg.keyFile) -Raw -EA SilentlyContinue) -match 'PRIVATE KEY')
+
+    # ---- checks ----
+    # ใช้ $script: เพราะฟังก์ชันซ้อนจะเข้า scope ของมันเอง ไม่เห็นตัวแปรในฟังก์ชัน
+    $script:RepChecks = @()
+    function Add-Check($k, $s, $d) {
+        $script:RepChecks = @($script:RepChecks) + [pscustomobject]@{ K = $k; S = $s; D = $d }
+    }
+
+    $risk = if ($php) { Get-PhpRisk $php.Version } else { 'NO_PHP' }
+    if (-not $php) { Add-Check 'PHP version' 'ERR' 'ยังไม่ได้เลือก PHP' }
+    elseif ($risk -eq 'UNPATCHED') { Add-Check 'PHP version' 'ERR' "$($php.Version) ยังไม่ patch ช่องโหว่ RCE" }
+    elseif ($risk -eq 'EOL') { Add-Check 'PHP version' 'ERR' "$($php.Version) = EOL (ไม่มี patch)" }
+    else { Add-Check 'PHP version' 'OK' "$($php.Version) ผ่านเกณฑ์ security-php.txt" }
+
+    $iniTxt = if (Test-Path $Script:P.PhpIni) { Get-Content $Script:P.PhpIni -Raw } else { '' }
+    Add-Check 'session.upload_progress' $(if ($iniTxt -match '(?m)^\s*session\.upload_progress\.enabled\s*=\s*Off') { 'OK' } else { 'ERR' }) 'ต้อง Off (ทางเข้าช่องโหว่)'
+    Add-Check 'expose_php' $(if ($iniTxt -match '(?m)^\s*expose_php\s*=\s*Off') { 'OK' } else { 'WARN' }) 'ต้อง Off'
+    Add-Check 'allow_url_include' $(if ($iniTxt -match '(?m)^\s*allow_url_include\s*=\s*Off') { 'OK' } else { 'WARN' }) 'ต้อง Off'
+    Add-Check 'display_errors' $(if ($iniTxt -match '(?m)^\s*display_errors\s*=\s*Off') { 'OK' } else { 'WARN' }) 'ปิดใน production'
+
+    $rootNorm = $Root.Replace('/', '\').TrimEnd('\').ToLowerInvariant()
+    $pathBad = 0
+    foreach ($f in @($Script:P.MySqlIni, $Script:P.PhpIni)) {
+        if (-not (Test-Path $f)) { continue }
+        foreach ($m in [regex]::Matches((Get-Content $f -Raw), '(?m)^\s*[\w\-.]+\s*=\s*"?([A-Za-z]:[\\/][^\r\n"]*)"?\s*$')) {
+            $p = $m.Groups[1].Value.Trim('"').Replace('/', '\').TrimEnd('\').ToLowerInvariant()
+            if (-not $p.StartsWith($rootNorm, [StringComparison]::OrdinalIgnoreCase)) { $pathBad++ }
+        }
+    }
+    Add-Check 'path ใน ini อยู่ใน bundle' $(if ($pathBad -eq 0) { 'OK' } else { 'ERR' }) $(if ($pathBad -eq 0) { 'copy ไปเครื่องอื่นได้' } else { "$pathBad จุดชี้ออกจากโฟลเดอร์" })
+
+    $myTxt = if (Test-Path $Script:P.MySqlIni) { Get-Content $Script:P.MySqlIni -Raw } else { '' }
+    Add-Check 'MariaDB bind 127.0.0.1' $(if ($myTxt -match 'bind-address\s*=\s*127\.0\.0\.1') { 'OK' } else { 'WARN' }) 'ไม่เปิดรับจากข้างนอก'
+
+    if ($httpP.Ok -and $httpP.Status -ge 200 -and $httpP.Status -lt 400) { Add-Check 'HTTP probe' 'OK' "$($httpP.Status) ($($httpP.Ms) ms) $($httpP.Url)" }
+    else { Add-Check 'HTTP probe' 'ERR' "$($httpP.Error)" }
+    if ($httpsP) {
+        if ($httpsP.Ok -and $httpsP.Status -ge 200 -and $httpsP.Status -lt 400) { Add-Check 'HTTPS probe' 'OK' "$($httpsP.Status) ($($httpsP.Ms) ms)" }
+        else { Add-Check 'HTTPS probe' 'ERR' "$($httpsP.Error)" }
+        Add-Check 'TLS cert' $(if (-not $ci) { 'ERR' } elseif ($ci.DaysLeft -lt 0) { 'ERR' } elseif ($ci.DaysLeft -lt 14) { 'WARN' } else { 'OK' }) $(if ($ci) { "$($ci.Subject) · หมดอายุ $($ci.NotAfter.ToString('yyyy-MM-dd')) (เหลือ $($ci.DaysLeft) วัน)" } else { 'ไม่พบ cert' })
+        Add-Check 'TLS key' $(if ($keyOk) { 'OK' } else { 'ERR' }) $(if ($keyOk) { 'มี private key ครบ' } else { 'ขาด private key' })
+        Add-Check 'TLS trust' $(if ($ci -and $ci.Trusted) { 'OK' } else { 'WARN' }) $(if ($ci -and $ci.Trusted) { 'อยู่ใน Trusted Root' } else { 'ยังไม่ได้ trust' })
+    }
+    Add-Check 'DB ping' $(if ($cfg.dbMode -eq 'external') { 'OK' } elseif ($dbPing) { 'OK' } else { 'ERR' }) $(if ($cfg.dbMode -eq 'external') { "external mode ที่ 127.0.0.1:$($cfg.dbPort)" } elseif ($dbPing) { "ping OK · 127.0.0.1:$($cfg.dbPort)" } else { 'ตอบไม่ได้' })
+
+    $vhItems = @()
+    $vhFile = Join-Path $Script:P.ConfigDir 'vhosts.json'
+    if (Test-Path $vhFile) { try { $vhItems = @((Get-Content $vhFile -Raw -Encoding UTF8 | ConvertFrom-Json)) } catch { } }
+    Add-Check 'Virtual hosts' $(if ($vhItems.Count -eq 0) { 'OK' } elseif ($wm -eq 'apache') { 'OK' } else { 'WARN' }) $(if ($vhItems.Count -eq 0) { 'ยังไม่ได้ตั้ง (ไม่บังคับ)' } elseif ($wm -eq 'apache') { "$($vhItems.Count) รายการ" } else { "$($vhItems.Count) รายการ แต่ webMode=$wm (ใช้ได้กับ apache)" })
+
+    $dumpCount = @(Get-ChildItem $Script:P.Dumps -Filter '*.sql' -EA SilentlyContinue).Count
+    if ($dumpCount -gt 0) { Add-Check 'data\dumps' 'WARN' "$dumpCount ไฟล์ (ข้อมูลจริง) — .gitignore กันแล้ว ห้าม commit" }
+
+    $gitLeak = ''
+    if (Test-Path (Join-Path $Root '.git')) {
+        $tracked = @(& git -C $Root ls-files 2>$null)
+        $leak = @($tracked | Where-Object { $_ -notlike 'examples/*' -and ($_ -match '^(stack/|versions/|data/|config/|bin/|dist/|downloads/)' -or ($_ -match '\.sql$' -and $_ -notlike 'examples/*')) })
+        Add-Check 'git ไม่ track ของ sensitive' $(if ($leak.Count -eq 0) { 'OK' } else { 'ERR' }) $(if ($leak.Count -eq 0) { "$($tracked.Count) ไฟล์ที่ track" } else { "มี $($leak.Count) ไฟล์: $($leak[0])" })
+    }
+    Add-Check 'Windows Service' $(if ($svc) { 'OK' } else { 'WARN' }) $(if ($svc) { "$($svc.Status) · $($svc.StartType)" } else { 'ยังไม่ได้ติดตั้ง (aptstack service install)' })
+    Add-Check 'webMode' $(if ($wm -eq 'apache') { 'OK' } else { 'OK' }) "$wm" 
+
+    $checks = @($script:RepChecks)
+
+    # ---- ขนาด ----
+    function Get-DirSizeMB($p) {
+        if (-not (Test-Path $p)) { return 0 }
+        [math]::Round(((Get-ChildItem $p -Recurse -File -EA SilentlyContinue | Measure-Object Length -Sum).Sum / 1MB), 1)
+    }
+    $sizeStack = Get-DirSizeMB $Script:P.Stack
+    $sizeVers = Get-DirSizeMB $Script:P.Versions
+    $sizeData = Get-DirSizeMB $Script:P.Data
+    $datadir = if ($mysql) { Get-DataDir $mysql } else { '' }
+
+    # ---- นับผล checks ----
+    $nOK = @($checks | Where-Object { $_.S -eq 'OK' }).Count
+    $nWarn = @($checks | Where-Object { $_.S -eq 'WARN' }).Count
+    $nErr = @($checks | Where-Object { $_.S -eq 'ERR' }).Count
+    $overall = if ($nErr -gt 0) { 'ไม่ผ่าน — ต้องแก้' } elseif ($nWarn -gt 0) { 'ผ่าน (มีคำเตือน)' } else { 'ผ่านทุกข้อ' }
+    $overallClass = if ($nErr -gt 0) { 'err' } elseif ($nWarn -gt 0) { 'warn' } else { 'ok' }
+
+    $verFile = Join-Path $Root 'VERSION'
+    $pkgVer = if (Test-Path $verFile) { (Get-Content $verFile -Raw).Trim() } else { '?' }
+
+    # ---- build rows ----
+    $sb = New-Object Text.StringBuilder
+    foreach ($c in $checks) {
+        $cls = switch ($c.S) { 'OK' { 'ok' } 'WARN' { 'warn' } default { 'err' } }
+        $mark = switch ($c.S) { 'OK' { '✓' } 'WARN' { '!' } default { '✗' } }
+        [void]$sb.AppendLine("<tr><td class='st $cls'>$mark $($c.S)</td><td>$([Net.WebUtility]::HtmlEncode($c.K))</td><td>$([Net.WebUtility]::HtmlEncode("$($c.D)"))</td></tr>")
+    }
+    $appRows = New-Object Text.StringBuilder
+    foreach ($a in $apps) {
+        $m = if ($cur -eq $a.Name) { ' <b>(ใช้อยู่)</b>' } else { '' }
+        [void]$appRows.AppendLine("<tr><td>$([Net.WebUtility]::HtmlEncode($a.Name))$m</td><td class='path'>$([Net.WebUtility]::HtmlEncode($a.Dir))</td></tr>")
+    }
+    $phpRows = New-Object Text.StringBuilder
+    foreach ($p in $phps) {
+        $m = if ($cfg.php -eq $p.Version) { ' <b>(ใช้อยู่)</b>' } else { '' }
+        $r = Get-PhpRisk $p.Version
+        $tag = if ($r -eq 'UNPATCHED') { ' · <span class="err">ยังไม่ patch</span>' } elseif ($r -eq 'EOL') { ' · <span class="err">EOL</span>' } else { '' }
+        [void]$phpRows.AppendLine("<tr><td>$([Net.WebUtility]::HtmlEncode($p.Version))$m$tag</td><td class='path'>$([Net.WebUtility]::HtmlEncode($p.Dir))</td></tr>")
+    }
+    $vhRows = New-Object Text.StringBuilder
+    if ($vhItems.Count -eq 0) { [void]$vhRows.AppendLine('<tr><td colspan="3" class="path">(ยังไม่ได้ตั้ง config\vhosts.json)</td></tr>') }
+    else { foreach ($v in $vhItems) { [void]$vhRows.AppendLine("<tr><td>$([Net.WebUtility]::HtmlEncode("$($v.host)"))</td><td>$([Net.WebUtility]::HtmlEncode("$($v.app)"))</td><td>$(if ("$($v.https)".ToLower() -eq 'false') { 'http only' } else { 'http+https' })</td></tr>") } }
+
+    $dt = Get-Date
+    $stamp = $dt.ToString('yyyy-MM-dd HH:mm:ss')
+
+    $html = @"
+<!DOCTYPE html>
+<html lang="th"><head><meta charset="utf-8">
+<title>aptstack — สรุปสถานะการติดตั้ง ($stamp)</title>
+<style>
+  *{box-sizing:border-box}
+  body{font-family:"Leelawadee UI","Sarabun",Tahoma,sans-serif;color:#111;background:#fff;
+       font-size:13px;line-height:1.55;margin:0;padding:18px 22px}
+  h1{font-size:21px;margin:0 0 2px;color:#000}
+  h2{font-size:15px;margin:20px 0 6px;padding:4px 8px;background:#f0f2f5;border-left:5px solid #1b57c4;color:#10306b}
+  .sub{color:#444;font-size:12px;margin:0 0 10px}
+  table{border-collapse:collapse;width:100%;margin:4px 0 10px}
+  th,td{border:1px solid #8a8f98;padding:4px 7px;vertical-align:top;text-align:left;font-size:12.5px}
+  th{background:#eef1f5;font-weight:700}
+  .path{font-family:Consolas,monospace;font-size:11.5px;color:#333;word-break:break-all}
+  .ok{color:#0a7a33;font-weight:700} .warn{color:#8a6100;font-weight:700} .err{color:#b00020;font-weight:700}
+  .badge{display:inline-block;border:2px solid #111;border-radius:6px;padding:4px 12px;font-weight:700;font-size:14px}
+  .b-ok{border-color:#0a7a33;color:#0a7a33} .b-warn{border-color:#8a6100;color:#8a6100} .b-err{border-color:#b00020;color:#b00020}
+  .grid{display:flex;gap:14px;flex-wrap:wrap}
+  .card{border:1px solid #8a8f98;padding:8px 10px;min-width:210px;flex:1}
+  .card b{display:block;font-size:12px;color:#10306b}
+  .kv{width:100%}.kv td:first-child{width:190px;background:#f7f8fa;font-weight:600}
+  .small{font-size:11.5px;color:#333}
+  footer{margin-top:16px;padding-top:8px;border-top:1px solid #8a8f98;font-size:11.5px;color:#333}
+  .noprint{color:#666;font-size:11.5px}
+  @media print{ body{padding:0;font-size:11.5px} .noprint{display:none} h2{page-break-after:avoid}
+    table{page-break-inside:auto} tr{page-break-inside:avoid} .card{break-inside:avoid} }
+</style></head><body>
+
+<h1>aptstack — สรุปสถานะการติดตั้ง</h1>
+<p class="sub">พิมพ์ได้เลย (File → Print) · ส้างอัตโนมัติด้วย <code>aptstack report</code></p>
+<p><span class="badge b-$overallClass">$overall</span>
+&nbsp; ✓ $nOK ผ่าน · ! $nWarn เตือน · ✗ $nErr ต้องแก้</p>
+
+<h2>1. ข้อมูลทั่วไป</h2>
+<table class="kv">
+<tr><td>เวลาที่สร้างรายงาน</td><td>$stamp</td></tr>
+<tr><td>โฟลเดอร์ bundle</td><td class="path">$([Net.WebUtility]::HtmlEncode($Root))</td></tr>
+<tr><td>เวอร์ชันแพ็กเกจ</td><td>$([Net.WebUtility]::HtmlEncode($pkgVer))</td></tr>
+<tr><td>OS / เครื่อง</td><td>$([Net.WebUtility]::HtmlEncode([Environment]::OSVersion.VersionString)) · $([Net.WebUtility]::HtmlEncode($env:COMPUTERNAME))</td></tr>
+<tr><td>ผู้ใช้ที่รัน</td><td>$([Net.WebUtility]::HtmlEncode("$env:USERDOMAIN\$env:USERNAME"))</td></tr>
+</table>
+
+<h2>2. สถานะการทำงาน (probe จริง)</h2>
+<table class="kv">
+<tr><td>Web (port $($cfg.httpPort))</td><td class="$(if($httpP.Ok){'ok'}else{'err'})">$(if($httpP.Ok){"UP · $($httpP.Status) · $($httpP.Ms) ms"}else{"DOWN · $($httpP.Error)"})</td></tr>
+<tr><td>HTTPS (port $($cfg.httpsPort))</td><td class="$(if(-not $httpsP){'ok'}elseif($httpsP.Ok){'ok'}else{'err'})">$(if(-not $httpsP){'ปิดอยู่ (httpsEnabled=false)'}elseif($httpsP.Ok){"UP · $($httpsP.Status) · $($httpsP.Ms) ms"}else{"DOWN · $($httpsP.Error)"})</td></tr>
+<tr><td>Database (port $($cfg.dbPort))</td><td class="$(if($dbPing -or $cfg.dbMode -eq 'external'){$(if($dbPortUp){'ok'}else{'err'})}else{'err'})">$(if($cfg.dbMode -eq 'external'){"external mode · port $(if($dbPortUp){'LISTENING'}else{'ว่าง'})"}elseif($dbPing){'UP · ping OK'}else{'DOWN · ping ไม่ตอบ'})</td></tr>
+<tr><td>Windows Service</td><td>$(if($svc){"$($svc.Status) · start=$($svc.StartType)"}else{'ยังไม่ได้ติดตั้ง'})</td></tr>
+</table>
+
+<h2>3. เวอร์ชันที่ติดตั้ง</h2>
+<div class="grid">
+  <div class="card"><b>App (active)</b>$([Net.WebUtility]::HtmlEncode($(if($cur){$cur}else{'(ยังไม่ได้ตั้ง)'})))<br><span class="small">ทั้งหมด $($apps.Count) ตัว</span></div>
+  <div class="card"><b>PHP (active)</b>$([Net.WebUtility]::HtmlEncode($(if($cfg.php){$cfg.php}else{'(ยังไม่เลือก)'})))<br><span class="small">ทั้งหมด $($phps.Count) ตัว · TS=$(if($php -and $php.ApacheMod){'มี'}else{'-'})</span></div>
+  <div class="card"><b>Web mode</b>$wm<br><span class="small">apache=$(if($apache){$apache.Version}else{'-'})</span></div>
+  <div class="card"><b>Database</b>$(if($cfg.dbMode -eq 'external'){'external (XAMPP/ของจริง)'}elseif($mysql){$mysql.Version}else{'-'})<br><span class="small">mode=$($cfg.dbMode)</span></div>
+</div>
+
+<table>
+<tr><th>App versions</th><th>path</th></tr>
+$($appRows.ToString())
+</table>
+<table>
+<tr><th>PHP</th><th>path</th></tr>
+$($phpRows.ToString())
+</table>
+
+<h2>4. ผลตรวจความปลอดภัย / สุขภาพ ($nOK/$($checks.Count))</h2>
+<table>
+<tr><th style="width:70px">ผล</th><th style="width:230px">รายการ</th><th>รายละเอียด</th></tr>
+$($sb.ToString())
+</table>
+
+<h2>5. ตั้งค่า (config\stack.json)</h2>
+<table class="kv">
+<tr><td>httpPort / dbPort / httpsPort</td><td>$($cfg.httpPort) / $($cfg.dbPort) / $($cfg.httpsPort)</td></tr>
+<tr><td>webMode / dbMode</td><td>$($cfg.webMode) / $($cfg.dbMode)</td></tr>
+<tr><td>appAlias (URL ของแอป)</td><td>/$([Net.WebUtility]::HtmlEncode($cfg.appAlias))/ &nbsp;→&nbsp; http://127.0.0.1:$($cfg.httpPort)/$([Net.WebUtility]::HtmlEncode($cfg.appAlias))/</td></tr>
+<tr><td>httpsEnabled</td><td>$($cfg.httpsEnabled)</td></tr>
+<tr><td>cert</td><td class="path">$(if($ci){"$([Net.WebUtility]::HtmlEncode($ci.Subject)) · หมดอายุ $($ci.NotAfter.ToString('yyyy-MM-dd')) · trust=$(if($ci.Trusted){'ใช่'}else{'ยังไม่'})"}else{'(ยังไม่ตั้ง) — aptstack tls init'})</td></tr>
+<tr><td>dbUser</td><td>$([Net.WebUtility]::HtmlEncode($cfg.dbUser))</td></tr>
+</table>
+
+<h2>6. Virtual hosts</h2>
+<table><tr><th>host</th><th>app</th><th>https</th></tr>$($vhRows.ToString())</table>
+$(if($vhItems.Count -gt 0){'<p class="small">ต้องเพิ่มใน hosts file: 127.0.0.1 ' + [Net.WebUtility]::HtmlEncode((($vhItems | ForEach-Object { "$($_.host)" }) -join ' ')) + '</p>'})
+
+<h2>7. พื้นที่และข้อมูล</h2>
+<table class="kv">
+<tr><td>stack\ (binary)</td><td>$sizeStack MB</td></tr>
+<tr><td>versions\ (โค้ดแอป)</td><td>$sizeVers MB · $($apps.Count) เวอร์ชัน</td></tr>
+<tr><td>data\ (ฐานข้อมูล)</td><td>$sizeData MB$(if($datadir){" · datadir: <span class='path'>$([Net.WebUtility]::HtmlEncode($datadir))</span>"})</td></tr>
+<tr><td>data\dumps</td><td>$dumpCount ไฟล์ .sql</td></tr>
+<tr><td>config\</td><td class="path">$([Net.WebUtility]::HtmlEncode($Script:P.ConfigDir))</td></tr>
+</table>
+
+<h2>8. คำสั่งที่ใช้บ่อย</h2>
+<table class="kv">
+<tr><td>สลับแอป</td><td><code>aptstack use &lt;ชื่อ&gt;</code> · <code>next</code> · <code>prev</code> · <code>use -</code></td></tr>
+<tr><td>สลับ PHP</td><td><code>aptstack use php &lt;ver&gt;</code></td></tr>
+<tr><td>ตรวจซ้ำ</td><td><code>aptstack doctor</code></td></tr>
+<tr><td>ดู log</td><td><code>aptstack logs apache|mysql|php</code></td></tr>
+<tr><td>backup</td><td><code>aptstack backup</code></td></tr>
+</table>
+
+<footer>
+  aptstack $([Net.WebUtility]::HtmlEncode($pkgVer)) · สร้างโดย <code>aptstack report</code> · $stamp<br>
+  เอกสาร: README-TH.md · docs/คู่มือ.md · docs/SCENARIO.md · docs/OFFLINE-DEPLOY.md
+</footer>
+<p class="noprint">เคล็ดลับพิมพ์: กด <b>Ctrl+P</b> → เลือกกระดาษ A4 → ติ๊ก "Background graphics" ถ้าอยากได้เส้นตารางสีเทา</p>
+
+</body></html>
+"@
+
+    if (-not $OutPath) { $OutPath = Join-Path $Root 'aptstack-report.html' }
+    Write-Utf8NoBom $OutPath $html
+
+    Write-Head 'สร้างรายงานสถานะ (สำหรับพิมพ์)'
+    Write-Ok "ผล: $overall  (✓ $nOK · ! $nWarn · ✗ $nErr)"
+    Write-Info "ไฟล์: $OutPath"
+    Write-Info 'เปิดดู/พิมพ์: Ctrl+P ในเบราว์เซอร์ (A4)'
+    try { Start-Process $OutPath | Out-Null; Write-Info 'เปิดในเบราว์เซอร์ให้แล้ว' } catch { }
+}
+
+# ------------------------------------------------- confirm / clone / remove / migrate
+function Confirm-Action([string]$Prompt, [string]$Expect = 'y') {
+    # พิมพ์คำถามก่อนเสมอ แล้วอ่านคำตอบ:
+    #  - stdin redirect (echo y | ...) -> อ่านจาก stdin (ถ้าไม่ตรง/ว่าง = ยกเลิก)
+    #  - ไม่มี stdin เลย -> ยกเลิกเพื่อความปลอดภัย (กันรันอัตโนมัติลบของจริง)
+    Write-Host "  $Prompt (พิมพ์ '$Expect')" -ForegroundColor Yellow
+    $a = $null
+    try {
+        if ([Console]::IsInputRedirected) { $a = [Console]::In.ReadLine() }
+        else { $a = Read-Host '  > ' }
+    } catch { return $false }
+    if ($null -eq $a) { Write-Info 'ไม่ได้คำตอบ — ยกเลิก'; return $false }
+    $ok = ("$a".Trim().ToLower() -eq $Expect.ToLower())
+    if (-not $ok) { Write-Info "คำตอบ '$a' ไม่ตรง — ยกเลิก" }
+    return $ok
+}
+
+function Guard-Name([string]$n, [string]$what = 'ชื่อ') {
+    if ([string]::IsNullOrWhiteSpace($n)) { throw "ต้องระบุ$what" }
+    if ($n -match '[\\/]|(\.\.)') { throw "$what ผิดปกติ (มี \ / หรือ ..): $n" }
+}
+
+function Get-FolderSizeMB($p) {
+    if (-not (Test-Path $p)) { return 0 }
+    [math]::Round(((Get-ChildItem $p -Recurse -File -EA SilentlyContinue | Measure-Object Length -Sum).Sum / 1MB), 1)
+}
+
+function Cmd-Clone($what, $from, $to) {
+    if (-not $what -or -not $from -or -not $to) { throw 'ใช้: aptstack clone <app|mysql> <จาก> <เป็น>' }
+    Guard-Name $from 'ชื่อต้นทาง'
+    Guard-Name $to 'ชื่อปลายทาง'
+
+    switch ($what.ToLower()) {
+        'app' {
+            $src = Join-Path $Script:P.Versions $from
+            $dst = Join-Path $Script:P.Versions $to
+            if (-not (Test-Path $src)) { throw "ไม่พบ versions\$from" }
+            if (Test-Path $dst) { throw "มี versions\$to อยู่แล้ว — เปลี่ยนชื่อปลายทาง" }
+            $cfg = Get-Config
+            $cur = Get-CurrentAppName
+            Write-Head "clone app   $from -> $to"
+            $mb = Get-FolderSizeMB $src
+            if (-not (Confirm-Action "คัดลอกโค้ด $mb MB จาก versions\$from ไป versions\$to ?")) { Write-Info 'ยกเลิก'; return }
+            robocopy $src $dst /E /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
+            if ($LASTEXITCODE -ge 8) { throw "copy ล้มเหลว (robocopy exit $LASTEXITCODE)" }
+            Set-SourceMeta $dst 'app' "clone of versions\$from"
+            Write-Ok "คัดลอกแล้ว: versions\$to ($mb MB)"
+            Write-Info "ยังอยู่เวอร์ชันเดิม: $cur (ระบบไม่สลับให้อัตโนมัติ)"
+            Write-Info "สลับเมื่อพร้อม: aptstack use $to      ย้อนกลับ: aptstack use -"
+            Write-Info 'DATABASE: ใช้ตัวเดิม — ค่าต่อ DB อยู่กลางที่ config\stack.json'
+            Write-Info '            (host/port/user/pass ไม่ผูกกับ app) → แอปใหม่เห็นข้อมูลชุดเดิม'
+        }
+        'mysql' {
+            # clone datadir -> ต้อง stop ก่อน (ห้าม copy ไฟล์ InnoDB ขณะ server เปิด)
+            $cfg = Get-Config
+            if ((Test-Running 'mysql') -or -not (Test-PortFree $cfg.dbPort)) {
+                throw 'ยังรันอยู่ — stop ก่อน clone datadir (ไฟล์ InnoDB ห้าม copy ตอนเปิด):  aptstack stop'
+            }
+            $srcD = $null
+            $eng = Resolve-MySql $from
+            if ($eng) { $srcD = Get-DataDir $eng } else { $srcD = Join-Path $Script:P.Data $from }
+            if (-not (Test-Path (Join-Path $srcD 'mysql'))) { throw "ไม่พบ datadir ที่มีข้อมูล: $srcD" }
+            $dstD = Join-Path $Script:P.Data $to
+            if (Test-Path $dstD) { throw "มี data\$to อยู่แล้ว" }
+            $mb = Get-FolderSizeMB $srcD
+            Write-Head "clone database  $from -> $to"
+            Write-Warn2 "จะคัดลอก datadir $mb MB (ต้อง stop แล้ว)"
+            Write-Info "ต้นทาง : $srcD"
+            Write-Info "ปลายทาง: $dstD"
+            if (-not (Confirm-Action 'คัดลอก datadir ใช่ไหม?')) { Write-Info 'ยกเลิก'; return }
+            robocopy $srcD $dstD /E /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
+            if ($LASTEXITCODE -ge 8) { throw "copy ล้มเหลว ($LASTEXITCODE)" }
+            Write-Ok "คัดลอก datadir แล้ว -> data\$to"
+            Write-Info 'ใช้กับ engine ใหม่: aptstack add mysql <zip ใหม่> แล้ว aptstack use mysql <ชื่อ engine ใหม่>'
+            Write-Warn2 'ห้ามรัน 2 engine พร้อมกันกับ datadir เดียวกัน — ของ clone นี้แยกกันแล้วจึงปลอดภัย'
+            Write-Info 'กลับไปของเดิม: aptstack use mysql <ชื่อเดิม> แล้ว start'
+        }
+        default { throw "ไม่รู้จัก '$what' — ใช้ได้: app | mysql" }
+    }
+}
+
+function Cmd-Remove($what, $name, $extra) {
+    if (-not $what -or -not $name) { throw 'ใช้: aptstack remove <app|php|apache|mysql> <ชื่อ> [data]' }
+    Guard-Name $name 'ชื่อ'
+    $cfg = Get-Config
+
+    switch ($what.ToLower()) {
+        'app' {
+            $cur = Get-CurrentAppName
+            if ($cur -eq $name) {
+                throw "'$name' กำลังใช้อยู่ — สลับไปก่อน: aptstack use <ชื่ออื่น> แล้วค่อยลบ (กัน junction ชี้ของที่ถูกลบ)"
+            }
+            $dir = Join-Path $Script:P.Versions $name
+            if (-not (Test-Path $dir)) { throw "ไม่พบ versions\$name" }
+            $mb = Get-FolderSizeMB $dir
+            Write-Head "ลบ app version: versions\$name"
+            Write-Warn2 "ลบถาวร $mb MB — ไม่ลง recycle bin, กู้คืนไม่ได้!"
+            Write-Info 'ถ้ายังไม่ได้ backup โค้ด/DB ให้ทำก่อน: aptstack backup'
+            if (-not (Confirm-Action "พิมพ์ y เพื่อลบ versions\$name ถาวร")) { Write-Info 'ยกเลิก'; return }
+            Remove-Item -LiteralPath $dir -Recurse -Force
+            Write-Ok "ลบแล้ว: versions\$name"
+            Write-Info 'database ไม่ถูกแตะ (อยู่คนละส่วน — data\)'
+        }
+        'php' {
+            $hit = Resolve-Php $name
+            if (-not $hit) { throw "ไม่พบ PHP '$name' (ดูชื่อ: aptstack list)" }
+            if ($cfg.php -eq $hit.Version) { throw "PHP $($hit.Version) กำลังใช้อยู่ — สลับก่อน: aptstack use php <ตัวอื่น>" }
+            $mb = Get-FolderSizeMB $hit.Dir
+            Write-Head "ลบ PHP: $($hit.Version)"
+            Write-Warn2 "ลบ $mb MB ($($hit.Dir)) — ถาวร!"
+            if (-not (Confirm-Action "พิมพ์ y เพื่อลบ PHP $($hit.Version)")) { Write-Info 'ยกเลิก'; return }
+            Remove-Item -LiteralPath $hit.Dir -Recurse -Force
+            Write-Ok "ลบ PHP $($hit.Version) แล้ว"
+        }
+        'apache' {
+            $hit = Resolve-Apache $name
+            if (-not $hit) { throw "ไม่พบ Apache '$name'" }
+            if ($cfg.apache -eq $hit.Version) { throw "Apache $($hit.Version) ถูกตั้งเป็น active — เปลี่ยน webMode หรือ apache ตัวอื่นก่อน" }
+            $mb = Get-FolderSizeMB $hit.Dir
+            Write-Head "ลบ Apache: $($hit.Version)"
+            Write-Warn2 "ลบ $mb MB ($($hit.Dir)) — ถาวร!"
+            if (-not (Confirm-Action "พิมพ์ y เพื่อลบ Apache $($hit.Version)")) { Write-Info 'ยกเลิก'; return }
+            Remove-Item -LiteralPath $hit.Dir -Recurse -Force
+            Write-Ok "ลบ Apache $($hit.Version) แล้ว"
+        }
+        'mysql' {
+            $hit = Resolve-MySql $name
+            $dir = if ($hit) { $hit.Dir } else { Join-Path $Script:P.MySqlRoot $name }
+            $dd = if ($hit) { Get-DataDir $hit } else { Join-Path $Script:P.Data $name }
+            $active = if ($cfg.mysql -and $hit -and $cfg.mysql -in @($hit.Version, $hit.Name)) { $true } else { $false }
+            $wantData = ("$extra".ToLower() -in @('data', '--data', 'datadir'))
+
+            if ($active) { throw "engine นี้เป็นตัวที่ใช้อยู่ — สลับก่อน: aptstack use mysql <ตัวอื่น>" }
+            if (Test-Path $dir) { } else { throw "ไม่พบ stack\mysql\$name" }
+
+            Write-Head "ลบ MySQL/MariaDB: $name"
+            $mbBin = Get-FolderSizeMB $dir
+            $mbData = if (Test-Path $dd) { Get-FolderSizeMB $dd } else { 0 }
+            Write-Info "binary : $dir ($mbBin MB)"
+            Write-Info "datadir: $(if (Test-Path $dd) { "$dd ($mbData MB)" } else { '(ไม่มี)' })"
+
+            if ($wantData) {
+                Write-Warn2 'จะลบทั้ง BINARY และ DATA (ข้อมูลในฐานข้อมูลชุดนี้หายถาวร!)'
+                if ($mbData -gt 0) { Write-Warn2 'แนะนำ: aptstack backup ก่อนเสมอ' }
+                if ((Test-Running 'mysql') -or -not (Test-PortFree $cfg.dbPort)) { throw 'ยังรันอยู่ — aptstack stop ก่อนลบ data' }
+                if (-not (Confirm-Action 'ขั้นที่ 1/2 — ยืนยันลบ data (พิมพ์ y)')) { Write-Info 'ยกเลิก'; return }
+                if (-not (Confirm-Action "ขั้นที่ 2/2 — พิมพ์ DELETE เพื่อลบ datadir $mbData MB ถาวร" 'DELETE')) { Write-Info 'ยกเลิก — ไม่มีอะไรถูกลบ'; return }
+                if (Test-Path $dd) {
+                    $ddFull = [IO.Path]::GetFullPath($dd).TrimEnd('\')
+                    $dataRoot = [IO.Path]::GetFullPath($Script:P.Data).TrimEnd('\')
+                    if (-not $ddFull.StartsWith($dataRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "ป้องกัน: path ไม่อยู่ใน data\ ($ddFull)" }
+                    Remove-Item -LiteralPath $ddFull -Recurse -Force
+                    Write-Ok "ลบ datadir แล้ว: $ddFull"
+                }
+            } else {
+                Write-Info 'DATADATA จะ "ไม่ถูกลบ" — เก็บไว้ใช้กับ engine ใหม่หรือกู้ภายหลัง'
+                Write-Info ' (ถ้าจะลบด้วย: aptstack remove mysql <ชื่อ> data)'
+            }
+
+            if (Test-Path $dir) {
+                if (-not (Confirm-Action "พิมพ์ y เพื่อลบ binary ($mbBin MB)")) { Write-Info 'ยกเลิก (data ที่สั่งลบไปแล้วยังคงอยู่ถ้ามี)'; return }
+                $dirFull = [IO.Path]::GetFullPath($dir).TrimEnd('\')
+                $stackRoot = [IO.Path]::GetFullPath($Script:P.MySqlRoot).TrimEnd('\')
+                if (-not $dirFull.StartsWith($stackRoot, [StringComparison]::OrdinalIgnoreCase)) { throw "ป้องกัน: path ไม่อยู่ใน stack\mysql\ ($dirFull)" }
+                Remove-Item -LiteralPath $dirFull -Recurse -Force
+                Write-Ok "ลบ binary แล้ว: $dirFull"
+            }
+        }
+        default { throw "ไม่รู้จัก '$what' — ใช้ได้: app | php | apache | mysql" }
+    }
+}
+
+function Cmd-Migrate($what, $to) {
+    # โยกข้อมูล database ไป engine ใหม่ แบบ logical dump -> restore
+    # (datadir ต่อ engine แยกกันอยู่แล้ว -> โยกโดยไม่แตะของเดิม = rollback ได้เสมอ)
+    if ("$what".ToLower() -ne 'mysql') { throw 'ใช้: aptstack migrate mysql <version ใหม่>' }
+    if (-not $to) { throw 'ต้องระบุ engine ปลายทาง: aptstack migrate mysql 11.4.13' }
+    $cfg = Get-Config
+    $cur = Resolve-MySql $cfg.mysql
+    $tgt = Resolve-MySql $to
+    if (-not $tgt) { throw "ไม่พบ engine '$to' — ติดตั้งก่อน: aptstack add mysql $to" }
+    if ($cur -and $cur.Name -eq $tgt.Name) { throw 'ปลายทางเป็น engine ตัวเดิมอยู่แล้ว' }
+    if (Test-PortFree $cfg.dbPort) { throw 'Database ยังไม่รัน (ต้องรันเพื่อ dump) — aptstack start' }
+
+    $fromName = if ($cur) { $cur.Name } else { '(ปัจจุบัน)' }
+    $srcD = if ($cur) { Get-DataDir $cur } else { '' }
+    $dstD = Get-DataDir $tgt
+    if (Test-Path (Join-Path $dstD 'mysql')) {
+        throw "data ปลายทางมีข้อมูลอยู่แล้ว: $dstD`nถ้าต้องการใช้ ให้ clone/สำรองไว้ก่อนแล้วลบ หรือเลือกชื่อ engine ใหม่"
+    }
+
+    Write-Head "migrate MySQL  $fromName -> $($tgt.Name)"
+    Write-Warn2 'วิธี: logical dump (mysqldump --all-databases) -> stop -> switch -> start -> restore'
+    Write-Info "ต้นทาง datadir : $srcD"
+    Write-Info "ปลายทาง datadir: $dstD (จะถูกสร้างใหม่ตอน start)"
+    Write-Info 'ของเดิมไม่ถูกแตะ → เสร็จแล้วย้อนกลับด้วย: aptstack use mysql <เดิม> + start'
+    if (-not (Confirm-Action 'เริ่ม migrate ใช่ไหม? (จะ dump ทุกฐานข้อมูลก่อน)')) { Write-Info 'ยกเลิก'; return }
+
+    # 1) dump
+    $hit = if ($cur) { $cur } else { Resolve-MySql $null }
+    if (-not $hit) { throw 'ไม่พบ engine ต้นทาง' }
+    $dump = Join-Path $Script:P.Dumps ('migrate-' + (Get-Date -Format 'yyyyMMdd_HHmmss') + '.sql')
+    $client = $null
+    foreach ($n in @('bin\mariadb-dump.exe', 'bin\mysqldump.exe')) { $p = Join-Path $hit.Dir $n; if (Test-Path $p) { $client = $p; break } }
+    if (-not $client) { throw 'ไม่พบ mariadb-dump/mysqldump' }
+    Write-Info "dump -> $dump"
+    $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $dargs = @('--skip-ssl', '-h', '127.0.0.1', '-P', "$($cfg.dbPort)", '--protocol=tcp', '--default-character-set=utf8mb4',
+               '-u', $cfg.dbUser, "-p$($cfg.dbPass)", '--single-transaction', '--routines', '--triggers', '--all-databases')
+    $pOut = Start-Process -FilePath $client -ArgumentList $dargs -RedirectStandardOutput $dump -RedirectStandardError (Join-Path $Script:P.Tmp 'migrate-err.txt') -Wait -PassThru -NoNewWindow
+    $ErrorActionPreference = $old
+    if ($pOut.ExitCode -ne 0 -or -not (Test-Path $dump) -or (Get-Item $dump).Length -lt 200) {
+        $e = if (Test-Path (Join-Path $Script:P.Tmp 'migrate-err.txt')) { (Get-Content (Join-Path $Script:P.Tmp 'migrate-err.txt') -Tail 3) -join ' ' } else { '' }
+        throw "dump ล้มเหลว (exit $($pOut.ExitCode)) $e"
+    }
+    Write-Ok ("dump สำเร็จ ({0:N1} MB)" -f ((Get-Item $dump).Length / 1MB))
+
+    # 2) stop -> switch -> start
+    Stop-Db
+    $cfg = Get-Config
+    $cfg.mysql = if ($tgt.Version) { $tgt.Version } else { $tgt.Name }
+    Save-Config $cfg
+    if (-not (Start-Db (Get-Config))) { throw 'start engine ปลายทางไม่สำเร็จ — datadir เดิมของต้นทางยังอยู่ครบ ย้อนกลับด้วย: aptstack use mysql <เดิม>' }
+
+    # 3) restore
+    $client2 = $null
+    foreach ($n in @('bin\mariadb.exe', 'bin\mysql.exe')) { $p = Join-Path $tgt.Dir $n; if (Test-Path $p) { $client2 = $p; break } }
+    if (-not $client2) { throw 'ไม่พบ mariadb/mysql client ของ engine ปลายทาง' }
+    Write-Info "restore <- $dump"
+    $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $rargs = @('--skip-ssl', '-h', '127.0.0.1', '-P', "$($cfg.dbPort)", '--protocol=tcp', '--default-character-set=utf8mb4',
+               '-u', $cfg.dbUser, "-p$($cfg.dbPass)", '--force')
+    $p2 = Start-Process -FilePath $client2 -ArgumentList $rargs -RedirectStandardInput $dump -RedirectStandardOutput (Join-Path $Script:P.Tmp 'migrate-out.txt') -RedirectStandardError (Join-Path $Script:P.Tmp 'migrate-err2.txt') -Wait -PassThru -NoNewWindow
+    $ErrorActionPreference = $old
+    if ($p2.ExitCode -ne 0) {
+        $e = if (Test-Path (Join-Path $Script:P.Tmp 'migrate-err2.txt')) { (Get-Content (Join-Path $Script:P.Tmp 'migrate-err2.txt') -Tail 3) -join ' ' } else { '' }
+        Write-Err2 "restore อาจไม่สมบูรณ์ (exit $($p2.ExitCode)) $e"
+        Write-Info "dump ยังอยู่: $dump — import มือได้ หรือย้อนกลับ: aptstack use mysql $(if ($cur) { if ($cur.Version) { $cur.Version } else { $cur.Name } })"
+        return
+    }
+    Write-Ok "migrate สำเร็จ -> engine $($tgt.Name)"
+    Write-Info "dump เก็บไว้: $dump"
+    if ($srcD) { Write-Info "datadir เดิม (ยังอยู่ ไม่ได้ลบ): $srcD" }
+    Write-Info "ย้อนกลับ: aptstack use mysql $(if ($cur) { if ($cur.Version) { $cur.Version } else { $cur.Name } }) แล้ว start"
+    Cmd-Status
+}
+
 function Cmd-Help {
     Write-Head 'aptstack — portable PHP / MariaDB / app-version manager'
     @'
@@ -2057,6 +2572,14 @@ function Cmd-Help {
   aptstack tls import <c.pem> <k.pem>  ใช้ SSL cert จริง (Let's Encrypt/พาณิชย์)
   aptstack tls off                  ปิด HTTPS
 
+  ── จัดการ version / ข้อมูล (มียืนยันก่อนลบ) ──────
+  aptstack clone app <จาก> <เป็น>  ก้อปปี้โค้ด app 1.0 -> 1.1 (ยังไม่สลับให้ -> use เอง)
+  aptstack clone mysql <จาก> <เป็น> คัดลอก datadir (ต้อง stop ก่อน · ใช้กับ engine ใหม่)
+  aptstack remove app <ชื่อ>       ลบโค้ด app (ถามยืนยัน · ตัวที่ใช้อยู่ลบไม่ได้)
+  aptstack remove php|apache|mysql <ชื่อ> [data]  ลบ binary (data เก็บไว้ เว้นแต่ใส่ data แล้วยืนยัน DELETE)
+  aptstack migrate mysql <ใหม่>    โยกข้อมูล DB ไป engine ใหม่ (dump -> switch -> restore)
+  aptstack report [path]           สร้างหน้า HTML สรุปสถานะทั้งหมด (เปิดให้ + พิมพ์ได้)
+
   ── Windows Service ──────────────────────────────────
   aptstack service install         ติดตั้ง service (ต้อง Run as admin)
   aptstack service uninstall
@@ -2091,8 +2614,16 @@ function Cmd-ServiceRun {
 
 # ---------------------------------------------------------------- dispatch
 Ensure-Dirs
+# -h / -? / --help ทุกรูปแบบ -> พาไป help
+if ($HelpFlag) { $Command = 'help' }
+
 switch ($Command.ToLower()) {
     'init'        { Cmd-Init }
+    'help'        { Cmd-Help }
+    'h'           { Cmd-Help }
+    '?'           { Cmd-Help }
+    '/?'          { Cmd-Help }
+    '--help'      { Cmd-Help }
     'add'         { Cmd-Add $Action $Value $Extra }
     'list'        { Cmd-List }
     'ls'          { Cmd-List }
@@ -2109,12 +2640,16 @@ switch ($Command.ToLower()) {
     'backup'      { Cmd-Backup $Action }
     'seed'        { Cmd-Seed }
     'samples'     { Cmd-Samples }
+    'report'      { Cmd-Report $Action }
+    'clone'       { Cmd-Clone $Action $Value $Extra }
+    'remove'      { Cmd-Remove $Action $Value $Extra }
+    'rm'          { Cmd-Remove $Action $Value $Extra }
+    'migrate'     { Cmd-Migrate $Action $Value }
     'logs'        { Cmd-Logs $Action $Value }
     'tls'         { Cmd-Tls $Action $Value $Extra }
     'https'       { Cmd-Tls $Action $Value $Extra }
     'service'     { & (Join-Path $Root 'service.ps1') -Action $Action }
     'service-run' { Cmd-ServiceRun }
-    'help'        { Cmd-Help }
     default       { Cmd-Help }
 }
 

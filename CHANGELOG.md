@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased (หลัง 1.2.0)
+
+คำสั่งจัดการ version/ข้อมูล + รายงานสถานะ + เอกสารชุดแกนกลาง
+
+### Added
+
+- **`aptstack report`** — สร้างหน้า HTML สรุปสถานะทั้งหมด (ผล probe จริง, รายการตรวจสอบ
+  ✓/!/✗, เวอร์ชันที่ติดตั้ง, config, vhost, พื้นที่) ออกแบบให้ **พิมพ์ได้เลย (Ctrl+P A4)**
+- **`aptstack clone app <จาก> <เป็น>`** — ก้อปปี้โค้ด app (ยังไม่สลับให้ → `use` เอง) +
+  ย้ำว่า **DB ใช้ตัวเดิม** (ค่าอยู่กลางที่ `config\stack.json`)
+- **`aptstack clone mysql <จาก> <เป็น>`** — คัดลอก datadir (บังคับ `stop` ก่อน + ยืนยัน)
+- **`aptstack remove app|php|apache|mysql <ชื่อ> [data]`** — ลบพร้อม
+  **แจ้งเตือน + ยืนยัน** · ปฏิเสธตัวที่ active · กัน path traversal ·
+  datadir ต้องยืนยันพิมพ์ `DELETE` (2 ชั้น) และ default **เก็บ data ไว้**
+- **`aptstack migrate mysql <ใหม่>`** — โยกข้อมูลไป engine ใหม่แบบ
+  dump → stop → switch → start → restore (ของเดิมไม่ถูกแตะ → rollback ได้)
+- **`-h` / `-?` / `--help` / `h` / `/?`** → โชว์ help (ก่อนหน้านี้พิมพ์แล้ว error)
+- เอกสารแกนกลางใหม่: **`ai.md`** (สำหรับ AI agent) · **`concept.md`** (สถาปัตยกรรม) ·
+  **`soul.md`** (เจตนารมณ์/เครดิต/สิ่งที่ไม่ทำ) · **`review.md`** (บั๊ค 25+ ที่เจอและแก้) ·
+  **`audit.md`** (security audit + compliance matrix + risk register)
+
+### Fixed
+
+- 🔴 **`.cmd`/`.bat` เป็น LF** → cmd พิมพ์ `'-' is not recognized` ทุกครั้ง → แปลงเป็น CRLF
+- `report`: nested function ใช้ `$script:` ผิด scope → `op_Addition` error
+- `Confirm-Action`: อ่านคำตอบจาก stdin เมื่อ piped (`echo y | ...`) ได้แล้ว
+- prompt แสดงก่อนอ่านคำตอบเสมอ
+
+---
+
 ## 1.2.0 — 2026-10-22
 
 ตัวอย่างแอป + คู่มือ scenario + ติดตั้ง PHP อัตโนมัติ

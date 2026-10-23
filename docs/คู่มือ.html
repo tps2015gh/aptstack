@@ -60,12 +60,16 @@
 <p class="sub" style="margin-top:6px">🚀 เพิ่งแตก ZIP ใหม่? อ่าน <a href="SCENARIO.md">SCENARIO.md</a> ก่อน —
 walkthrough ยาว ตั้งแต่แตกไฟล์ → ใส่ binary → เล่น 3 แอป → สลับแอป → ตั้งชื่อ version →
 HTTPS/vhost → Service → backup</p>
+<p class="sub" style="margin-top:2px">เอกสารลึก: <a href="../review.md">review</a> ·
+<a href="../audit.md">audit</a> · <a href="../concept.md">concept</a> ·
+<a href="../soul.md">soul</a> · <a href="../ai.md">ai</a> ·
+<a href="OFFLINE-DEPLOY.md">offline</a> · <a href="../SECURITY.md">SECURITY</a></p>
 </header>
 
 <div class="nav">
   <b>เนื้อหา:</b>
   <a href="#s0">คืออะไร</a><a href="#s1">เริ่มใช้</a><a href="SCENARIO.md">Scenario ยาว</a><a href="#s2">คำสั่ง</a>
-  <a href="#s3">สลับเวอร์ชัน</a><a href="#s4">สลับ PHP</a><a href="#s4b">สลับ Apache/MySQL</a><a href="#s5">XAMPP</a><a href="#s5a">HTTPS</a><a href="#s5b">vhosts</a>
+  <a href="#s3">สลับเวอร์ชัน</a><a href="#s4">สลับ PHP</a><a href="#s4b">สลับ Apache/MySQL</a><a href="#s5">XAMPP</a><a href="#s5a">HTTPS</a><a href="#s5b">vhosts</a><a href="#s5c">clone/remove</a>
   <a href="#s6">Service</a><a href="#s7">ย้าย server</a><a href="#s8">แก้ปัญหา</a>
   <a href="#s9">ความปลอดภัย</a><a href="#s10">โครงสร้าง</a>
 </div>
@@ -137,6 +141,7 @@ aptstack add php &lt;zip|url&gt;       หรือส่ง URL/path เอง
 aptstack add apache &lt;url|zip&gt;    เพิ่ม Apache     -&gt; stack\apache\&lt;ver&gt;
 aptstack add mysql &lt;ver|zip&gt;     เพิ่ม MySQL/MariaDB -&gt; stack\mysql\&lt;ver&gt;
 aptstack seed                    สร้าง database ตัวอย่าง (greetings + todo_items)
+aptstack report                  สร้างหน้า HTML สรุปสถานะ (เปิดให้ + พิมพ์ได้ Ctrl+P)
 
 aptstack use                     เมนูเลือก (แอป + PHP) กดเลข + Enter
 aptstack use 1.2.0               สลับแอป + restart ให้เอง
@@ -159,6 +164,12 @@ aptstack tls status               ดูสถานะ HTTPS + cert + วัน
 aptstack tls init [domain,..]     สร้าง self-signed + เปิด HTTPS + trust
 aptstack tls import &lt;c&gt; &lt;k&gt;       ใช้ SSL cert จริง (Let's Encrypt/พาณิชย์)
 aptstack tls off                  ปิด HTTPS
+
+aptstack clone app &lt;จาก&gt; &lt;เป็น&gt;  ก้อปปี้โค้ด app (ยังไม่สลับให้ -> use เอง · DB ใช้ตัวเดิม)
+aptstack clone mysql &lt;จาก&gt; &lt;เป็น&gt; คัดลอก datadir (ต้อง stop ก่อน + ยืนยัน)
+aptstack remove app &lt;ชื่อ&gt;       ลบโค้ด app (ถามยืนยัน · ตัว active ลบไม่ได้)
+aptstack remove php|apache|mysql &lt;ชื่อ&gt; [data]  ลบ binary (data เก็บไว้ เว้นแต่ใส่ data)
+aptstack migrate mysql &lt;ใหม่&gt;    โยกข้อมูล DB ไป engine ใหม่ (dump -> restore)
 
 aptstack service install         ลง Windows Service (ต้อง admin)
 aptstack service uninstall       ถอน
@@ -320,6 +331,35 @@ aptstack doctor       <span style="color:#6b7280">:: ตรวจนับ vhost
 <b>vhost ตัวแรกเป็น default</b> — aptstack ใส่ default vhost ชี้ <code>www\</code> ไว้ก่อนเสมอ
 จึงไม่ทำให้ <code>http://127.0.0.1:8077/</code> เพี้ยน (ทดสอบแล้ว แยกถูกทั้ง default/demo/apt)<br>
 ข้อจำกัด: ใช้ได้กับ <code>webMode=apache</code> เท่านั้น
+</div>
+
+<h2 id="s5c">5c. จัดการ version: clone / remove / migrate / report</h2>
+<pre><code>:: ก้อปปี้โค้ด app -&gt; ยังอยู่เวอร์ชันเดิมจนกว่าจะสั่ง use (DB ใช้ตัวเดิมเสมอ)
+aptstack clone app 1.0 1.1
+aptstack use 1.1                 <span style="color:#6b7280">:: เมื่อพร้อม</span>
+
+:: คัดลอก datadir (บังคับ stop — ไฟล์ InnoDB ห้าม copy ตอนเปิด)
+aptstack stop
+aptstack clone mysql mariadb-11.4.13 mariadb-11.4.14
+
+:: โยกข้อมูลไป engine ใหม่ (dump -&gt; switch -&gt; restore · ของเดิมไม่ถูกแตะ)
+aptstack migrate mysql 10.11.19
+
+:: ลบ — ถามยืนยันเสมอ · ตัว active ลบไม่ได้ · กัน path traversal
+aptstack remove app 1.0
+aptstack remove mysql mariadb-11.4.13 data   <span style="color:#6b7280">:: ต้องพิมพ์ DELETE</span>
+
+:: รายงานสถานะเป็น HTML (เปิดให้ + Ctrl+P พิมพ์ A4)
+aptstack report</code></pre>
+
+<div class="box">
+<b>หลักการสำคัญ</b><br>
+• <b>DB ไม่ผูกกับแอป</b> — ค่า host/port/user/pass อยู่กลางที่ <code>config\stack.json</code>
+→ clone แอปใหม่เห็นข้อมูลชุดเดิมทันที<br>
+• <b>datadir แยกต่อ engine</b> → <code>clone mysql</code> ใช้ตอนลอง engine ใหม่โดยยังเก็บของเดิม<br>
+• <b>migrate = dump/restore</b> (logical) ไม่ใช่ copy ไฟล์ → ข้ามเวอร์ชัน engine ได้ + rollback ได้<br>
+• คำสั่งทำลายของจริง <b>ต้องยืนยัน</b> (<code>y</code> / <code>DELETE</code>) — ไม่มี stdin = ยกเลิกเอง<br>
+• help: <code>aptstack help</code> · <code>-h</code> · <code>--help</code> (แต่ต้องเรียกผ่าน <code>.cmd</code>)
 </div>
 
 <h2 id="s6">6. Windows Service</h2>

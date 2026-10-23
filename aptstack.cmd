@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-rem aptstack.cmd - เรียก aptstack.ps1 จาก cmd/PowerShell โดยไม่ต้องแก้ ExecutionPolicy ถาวร
+rem aptstack.cmd - ????? aptstack.ps1 ??? cmd/PowerShell ????????????? ExecutionPolicy ????
 
 set "SCRIPT_DIR=%~dp0"
 set "PS1=%SCRIPT_DIR%aptstack.ps1"

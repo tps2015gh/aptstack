@@ -10,7 +10,9 @@ devstack does not have: **app-version switching** and **Windows Service install*
 > [README-TH.md](README-TH.md) · คู่มือใช้งาน [docs/คู่มือ.md](docs/คู่มือ.md) ·
 > [docs/คู่มือ.html](docs/คู่มือ.html) · [offline/air-gapped](docs/OFFLINE-DEPLOY.md) ·
 > เทียบกับ devstack [docs/เปรียบเทียบ-devstack.md](docs/เปรียบเทียบ-devstack.md) ·
-> credits + ความเห็นต่อโปรเจกต์ [docs/ABOUT-TH.md](docs/ABOUT-TH.md)
+> credits + ความเห็นต่อโปรเจกต์ [docs/ABOUT-TH.md](docs/ABOUT-TH.md) ·
+> deep dives: [review](review.md) (bugs found & fixed) · [audit](audit.md) (security) ·
+> [concept](concept.md) (architecture) · [soul](soul.md) (philosophy) · [ai](ai.md) (for AI agents)
 
 ---
 
@@ -128,6 +130,12 @@ are ignored on purpose (this repo is public).
 | `aptstack seed` | import sample database (`aptstack_demo`) |
 | `aptstack logs <apache\|mysql\|php\|all> [n]` | tail log files, highlight errors |
 | `aptstack tls status\|init\|import\|off` | HTTPS — self-signed **or real cert** |
+| `aptstack report` | printable HTML status report (all checks + probes) |
+| `aptstack clone app <from> <to>` | copy app code (does not switch; **same DB**) |
+| `aptstack clone mysql <from> <to>` | copy a datadir (requires `stop` + confirm) |
+| `aptstack remove app\|php\|apache\|mysql <name> [data]` | delete with warnings + confirmation |
+| `aptstack migrate mysql <new>` | move data to another engine (dump → restore) |
+| `aptstack help` / `-h` / `--help` | show all commands (via `aptstack.cmd`) |
 | `aptstack service install` | Windows Service (admin) |
 
 ## Ports

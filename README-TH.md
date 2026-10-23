@@ -11,6 +11,8 @@
 > [คู่มือใช้งาน](docs/คู่มือ.md) · [คู่มือ (HTML)](docs/คู่มือ.html) ·
 > [แบบ offline/intranet](docs/OFFLINE-DEPLOY.md) ·
 > [เทียบกับ devstack](docs/เปรียบเทียบ-devstack.md) · [ความปลอดภัย](SECURITY.md) ·
+> [ตรวจงาน / บั๊คที่เจอ](review.md) · [ตรวจความปลอดภัย](audit.md) ·
+> [แนวคิด+สถาปัตยกรรม](concept.md) · [จิตวิญญาณ+เครดิต](soul.md) · [คู่มือสำหรับ AI](ai.md) ·
 > [เกี่ยวกับโปรเจกต์ / เครดิต + ความเห็น](docs/ABOUT-TH.md) ·
 > [README ภาษาอังกฤษ](README.md)
 
@@ -161,6 +163,32 @@ aptstack service uninstall     :: ถอน (ไม่เหลืออะไ�
 ```cmd
 aptstack backup            :: dump ทุก database -> data\dumps\
 ```
+
+### 7) จัดการ version: clone / remove / migrate / report
+
+```cmd
+:: ก้อปปี้ app 1.0 -> 1.1 (ยังไม่สลับให้ -> use เอง · DB ใช้ตัวเดิม)
+aptstack clone app 1.0 1.1
+
+:: คัดลอก datadir (ต้อง stop ก่อน — ไฟล์ InnoDB ห้าม copy ตอนเปิด)
+aptstack stop
+aptstack clone mysql mariadb-11.4.13 mariadb-11.4.14
+
+:: โยกข้อมูล DB ไป engine ใหม่ (dump -> switch -> restore · ของเดิมไม่ถูกแตะ)
+aptstack migrate mysql mariadb-10.11.19
+
+:: ลบ (ถามยืนยันเสมอ · ตัวที่ใช้อยู่ลบไม่ได้)
+aptstack remove app 1.0
+aptstack remove php 8.1.34
+aptstack remove mysql mariadb-11.4.13          :: เก็บ data ไว้
+aptstack remove mysql mariadb-11.4.13 data     :: ลบทั้งคู่ (ต้องพิมพ์ DELETE)
+
+:: สรุปสถานะทั้งหมดเป็น HTML เปิดดู/พิมพ์ได้ (Ctrl+P A4)
+aptstack report
+```
+
+> `help` ทุกคำสั่ง: `aptstack help` (หรือ `-h` / `--help` / `/?`) — แต่**ต้องเรียกผ่าน `.cmd`**
+> (`.\aptstack.ps1` ตรง ๆ จะโดน ExecutionPolicy บล็อก)
 
 ---
 
