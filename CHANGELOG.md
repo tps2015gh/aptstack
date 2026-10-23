@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`aptstack ports`** — ดูพอร์ตของ stack (HTTP/HTTPS/MySQL) พร้อม **เจ้าของ exe** (PID + path + โฟลเดอร์)
+  แยก mark `[ours]` / `[bundle]` / `[other]` → รู้ทันทีว่า port โดนจองโดย program ของ bundle ไหน
+- **`aptstack stop <port>`** — หยุด process ที่จองพอร์ตนั้น · โชว์ exe path ก่อน ·
+  ถ้า **ไม่ใช่ของ bundle นี้** จะถามยืนยันก่อนเสมอ
+- `status` + ข้อความเตือนตอน `start`/`doctor` โชว์ path ของ program ที่จอง port ด้วย
+
 ## 1.3.0 — 2026-10-23
 
 คำสั่งจัดการ version/ข้อมูล + รายงานสถานะ + พื้นที่ดิสก์ + ไดอะแกรม + เอกสารแกนกลาง

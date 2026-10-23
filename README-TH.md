@@ -370,7 +370,7 @@ aptstack logs all
 | อาการ | ทำอะไร |
 |---|---|
 | หน้าแอปขาว / ขึ้น `mysqli_connect() ไม่มี` | `aptstack restart` (php.ini generate ใหม่) |
-| พอร์ตชน | แก้ `httpPort` / `dbPort` ใน `config\stack.json` แล้ว restart |
+| พอร์ตชน | `aptstack ports` ดู exe path → `aptstack stop <port>` (ถามก่อนถ้าของคนอื่น) หรือแก้ port ใน `config\stack.json` แล้ว restart |
 | อยากดู log | `logs\php-error.log`, `logs\mariadb-error.log` |
 | `aptstack` ไม่รู้จัก | ต้อง `cd` อยู่ที่โฟลเดอร์นี้ก่อน หรือใช้ `as` |
 | เปลี่ยน php.ini แล้วหาย | ถูกต้อง — ให้แก้ที่ `templates\php-extensions.ini` / `php-hardening.ini` |

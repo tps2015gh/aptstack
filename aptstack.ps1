@@ -594,6 +594,60 @@ function Get-PortPid($port) {
     return $null
 }
 
+function Get-PortOwner([int]$Port) {
+    # แผนที่พอร์ต -> PID -> exe image path (+ โฟลเดอร์) รู้ได้ทันทีว่าของ bundle ไหน
+    $c = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $c) { return $null }
+    $id = [int]$c.OwningProcess
+    $proc = Get-Process -Id $id -ErrorAction SilentlyContinue
+    $name = ''; $path = ''
+    if ($proc) {
+        $name = "$($proc.ProcessName)"
+        try { $path = "$($proc.Path)" } catch { $path = '' }
+    }
+    if (-not $path) {
+        try {
+            $ci = Get-CimInstance Win32_Process -Filter "ProcessId=$id" -ErrorAction SilentlyContinue
+            if ($ci) {
+                if ($ci.ExecutablePath) { $path = "$($ci.ExecutablePath)" }
+                if (-not $name -and $ci.Name) { $name = "$($ci.Name)" }
+            }
+        } catch { }
+    }
+    $folder = ''
+    if ($path) { try { $folder = Split-Path -Parent $path } catch { $folder = '' } }
+    $isSelf = $false
+    if ($path) {
+        $pn = $path.Replace('/', '\').TrimEnd('\')
+        $rn = "$Root".Replace('/', '\').TrimEnd('\')
+        $isSelf = $pn.StartsWith($rn + '\', [StringComparison]::OrdinalIgnoreCase) -or
+                  ($pn -ieq $rn)
+    }
+    return [pscustomobject]@{
+        Port   = $Port
+        Pid    = $id
+        Name   = $name
+        Path   = $path
+        Folder = $folder
+        IsSelf = $isSelf
+    }
+}
+
+function Write-PortOwner($owner, [string]$Label) {
+    # ใช้ตอน "พอร์ตถูกจอง" — โชว์ PID + program + path ให้รู้ว่า bundle ไหน
+    if (-not $owner) {
+        Write-Warn2 "$Label พอร์ต : ว่าง"
+        return
+    }
+    $tag = if ($owner.IsSelf) { 'ของ bundle นี้' } else { 'ของ program อื่น' }
+    Write-Info ("{0} พอร์ต {1} ถูกจองโดย PID {2} ({3})  [{4}]" -f $Label, $owner.Port, $owner.Pid, $owner.Name, $tag)
+    if ($owner.Path) { Write-Info "exe : $($owner.Path)" }
+    if ($owner.Folder) { Write-Info "dir : $($owner.Folder)" }
+    if (-not $owner.IsSelf) {
+        Write-Info "หยุดตัวนี้: aptstack stop $($owner.Port)"
+    }
+}
+
 # --------------------------------------------------------------- health probe
 # ไม่รอแบบ blind (พอร์ตเปิด = จบ) -> ยิง HTTP จริงจนกว่าจะตอบ
 function Invoke-HttpProbe([string]$Url, [int]$TimeoutSec = 5) {
@@ -677,14 +731,68 @@ function Stop-ByPidFile($name) {
     Clear-Pid $name
 }
 
-function Stop-ByPort($port, $label) {
-    $id = Get-PortPid $port
-    if (-not $id) { return }
+function Stop-ByPort($port, $label, [switch]$Force) {
+    $owner = Get-PortOwner ([int]$port)
+    if (-not $owner) { return }
+    Write-Info ("จองพอร์ต {0}: PID {1} ({2})" -f $port, $owner.Pid, $owner.Name)
+    if ($owner.Path) { Write-Info "exe : $($owner.Path)" }
+    if (-not $owner.IsSelf -and -not $Force) {
+        Write-Warn2 'program นี้ "ไม่ใช่" ของ bundle นี้ — ถ้าใช่ bundle อื่นที่คุณเปิดค้างไว้ ค่อยหยุดเอง'
+        if (-not (Confirm-Action "หยุด PID $($owner.Pid) ($($owner.Name)) ที่พอร์ต $port จริงไหม?")) {
+            Write-Info 'ข้าม — ไม่ได้หยุดอะไร'
+            return
+        }
+    }
     try {
-        $proc = Get-Process -Id $id -ErrorAction SilentlyContinue
-        Stop-Process -Id $id -Force -ErrorAction Stop
-        Write-Ok "หยุด $label (PID $id$(if($proc){' / ' + $proc.ProcessName})) ที่จองพอร์ต $port"
+        Stop-Process -Id $owner.Pid -Force -ErrorAction Stop
+        Write-Ok "หยุด $label (PID $($owner.Pid) / $($owner.Name)) ที่จองพอร์ต $port"
+        if ($owner.Folder) { Write-Info "จากโฟลเดอร์: $($owner.Folder)" }
     } catch { Write-Warn2 "หยุด process บนพอร์ต $port ไม่สำเร็จ" }
+}
+
+function Cmd-Ports([string]$what) {
+    # aptstack ports           -> ดู port ของ stack + ใครจองอยู่ (path ครบ)
+    # aptstack ports stop 3307 -> หยุดตัวที่จอง port นั้น (ถามยืนยันถ้าไม่ใช่ของเรา)
+    $cfg = Get-Config
+    $rows = @(
+        [pscustomobject]@{ Label = 'HTTP';  Port = [int]$cfg.httpPort; Ours = 'web' },
+        [pscustomobject]@{ Label = 'HTTPS'; Port = [int]$cfg.httpsPort; Ours = 'web' },
+        [pscustomobject]@{ Label = 'MySQL'; Port = [int]$cfg.dbPort; Ours = 'mysql' }
+    )
+    if ("$what".ToLower() -in @('stop', 'kill')) {
+        $p = 0
+        if ($Action -match '^\d+$') { $p = [int]$Action }
+        elseif ($Value -match '^\d+$') { $p = [int]$Value }
+        else { throw 'ใช้: aptstack ports stop <port>   เช่น aptstack ports stop 3307' }
+        Stop-ByPort $p "port $p"
+        return
+    }
+
+    Write-Head 'พอร์ตของ stack + เจ้าของ (exe image)'
+    $cfg = Get-Config
+    Write-Info "bundle : $Root"
+    Write-Info "config : http=$($cfg.httpPort)  https=$($cfg.httpsPort)  mysql=$($cfg.dbPort)"
+    Write-Host ''
+    foreach ($r in $rows) {
+        $ownPid = Get-PortPid $r.Port
+        if (-not $ownPid) {
+            Write-Host ("  {0,-5} {1,-5}  ว่าง" -f $r.Label, $r.Port) -ForegroundColor DarkGray
+            continue
+        }
+        $owner = Get-PortOwner $r.Port
+        $ours = [bool](Test-Running $r.Ours)
+        $mark = if ($ours -and $owner -and $owner.IsSelf) { '[ours]' }
+                elseif ($owner -and $owner.IsSelf) { '[bundle]' }
+                else { '[other]' }
+        $color = if ($mark -eq '[ours]') { 'Green' } elseif ($mark -eq '[bundle]') { 'Yellow' } else { 'Red' }
+        Write-Host ("  {0,-5} {1,-5}  {2,-8} PID {3}  {4}" -f $r.Label, $r.Port, $mark, $owner.Pid, $owner.Name) -ForegroundColor $color
+        if ($owner.Path)   { Write-Info "exe : $($owner.Path)" }
+        if ($owner.Folder) { Write-Info "dir : $($owner.Folder)" }
+        if ($mark -eq '[other]') { Write-Info "หยุด: aptstack ports stop $($r.Port)   (หรือ aptstack stop $($r.Port))" }
+    }
+    Write-Host ''
+    Write-Info 'ดูพอร์ตอื่น: aptstack ports แล้วดูบรรทัด [other] · หยุด: aptstack stop <port>'
+    Write-Info 'หมายเหตุ: [ours] = stack ชุดนี้รันอยู่ · [other] = program อื่น (มักเป็น aptstack/XAMPP bundle ที่เปิดค้าง)'
 }
 
 # ---------------------------------------------------------------- db helpers
@@ -722,7 +830,8 @@ function Start-Db($cfg) {
     }
     if (Test-Running 'mysql') { Write-Info 'MariaDB รันอยู่แล้ว'; return $true }
     if (-not (Test-PortFree $cfg.dbPort)) {
-        Write-Warn2 "พอร์ต $($cfg.dbPort) ถูกใช้อยู่โดย process อื่น (PID $(Get-PortPid $cfg.dbPort)) — ข้าม MariaDB"
+        Write-Warn2 "พอร์ต $($cfg.dbPort) ถูกใช้อยู่ — ข้าม MariaDB"
+        Write-PortOwner (Get-PortOwner ([int]$cfg.dbPort)) 'MySQL'
         return $false
     }
     $hit = Resolve-MySql $cfg.mysql
@@ -796,7 +905,8 @@ function Start-Db($cfg) {
 function Start-Web($cfg) {
     if (Test-Running 'web') { Write-Info 'Web server รันอยู่แล้ว'; return $true }
     if (-not (Test-PortFree $cfg.httpPort)) {
-        Write-Warn2 "พอร์ต $($cfg.httpPort) ถูกใช้อยู่โดย process อื่น (PID $(Get-PortPid $cfg.httpPort)) — ข้าม web"
+        Write-Warn2 "พอร์ต $($cfg.httpPort) ถูกใช้อยู่ — ข้าม web"
+        Write-PortOwner (Get-PortOwner ([int]$cfg.httpPort)) 'HTTP'
         return $false
     }
     $php = Resolve-Php $cfg.php
@@ -967,7 +1077,14 @@ function Cmd-Start {
     Cmd-Summary
 }
 
-function Cmd-Stop {
+function Cmd-Stop([string]$what) {
+    # aptstack stop          -> หยุด web + db ของ bundle นี้
+    # aptstack stop 3307     -> หยุด process ที่จอง port นั้น (โชว์ path ก่อน ถามถ้าไม่ใช่ของเรา)
+    if ("$what" -match '^\d+$') {
+        Write-Head "หยุด process บนพอร์ต $what"
+        Stop-ByPort ([int]$what) "port $what"
+        return
+    }
     Write-Head 'หยุด stack'
     Stop-Web
     Stop-Db
@@ -1006,6 +1123,22 @@ function Cmd-Status {
     Write-Host "  URL         : http://127.0.0.1:$($cfg.httpPort)/$($cfg.appAlias)/"
     Write-Host "  Database    : 127.0.0.1:$($cfg.dbPort)"
     Write-Host "  Service     : $(if (Get-Service -Name $cfg.serviceName -EA SilentlyContinue) { 'ติดตั้งแล้ว' } else { 'ยังไม่ติดตั้ง' })"
+
+    # พอร์ตถูกใครจอง (โชว์ path ถ้าไม่ใช่ของเรา)
+    Write-Host ''
+    Write-Host '  พอร์ต:' -ForegroundColor Cyan
+    foreach ($pair in @(@('HTTP', $cfg.httpPort, 'web'), @('HTTPS', $cfg.httpsPort, 'web'), @('MySQL', $cfg.dbPort, 'mysql'))) {
+        $pid0 = Get-PortPid $pair[1]
+        if (-not $pid0) { Write-Info ("{0,-5} {1,-5}  ว่าง" -f $pair[0], $pair[1]); continue }
+        $owner = Get-PortOwner $pair[1]
+        $ours = [bool](Test-Running $pair[2])
+        $mark = if ($ours -and $owner.IsSelf) { 'ours' } elseif ($owner.IsSelf) { 'bundle' } else { 'OTHER' }
+        Write-Info ("{0,-5} {1,-5}  [{2}] PID {3} {4}" -f $pair[0], $pair[1], $mark, $owner.Pid, $owner.Name)
+        if ($mark -eq 'OTHER' -and $owner.Folder) {
+            Write-Info "      dir : $($owner.Folder)"
+            Write-Info "      หยุด: aptstack stop $($pair[1])"
+        }
+    }
 }
 
 # ---------------------------------------------------------------- switch
@@ -1832,7 +1965,12 @@ function Cmd-Doctor {
         $up = -not (Test-PortFree $pair[1])
         $own = Test-Running $(if ($pair[0] -eq 'HTTP') { 'web' } else { 'mysql' })
         if ($up -and $own) { Write-Ok "พอร์ต $($pair[1]) ($($pair[0])) รันโดย aptstack (PID $($own.Id))" }
-        elseif ($up) { Write-Warn2 "พอร์ต $($pair[1]) ถูก program อื่นใช้อยู่ (PID $(Get-PortPid $pair[1]))" }
+        elseif ($up) {
+            $ow = Get-PortOwner ([int]$pair[1])
+            Write-Warn2 "พอร์ต $($pair[1]) ถูก program อื่นใช้อยู่ (PID $($ow.Pid) / $($ow.Name))"
+            if ($ow.Folder) { Write-Info "dir: $($ow.Folder)" }
+            Write-Info "ดูเพิ่ม: aptstack ports · หยุด: aptstack stop $($pair[1])"
+        }
         else { Write-Ok "พอร์ต $($pair[1]) ว่าง (ยังไม่ start)" }
     }
 
@@ -3224,8 +3362,10 @@ function Cmd-Help {
 
   ── เปิด/ปิด ──────────────────────────────────────────
   aptstack start | stop | restart
+  aptstack stop <port>           หยุด program ที่จองพอร์ตนั้น (โชว์ exe path ก่อน · ถามถ้าไม่ใช่ของเรา)
+  aptstack ports                 ดูพอร์ตของ stack + เจ้าของ (PID/exe/folder) — รู้ทันทีของ bundle ไหน
   aptstack run                   dev console: start + บล็อกหน้าจอ กด Ctrl+C หยุด (ไม่ต้อง register service)
-  aptstack status
+  aptstack status                รวม mapping พอร์ต -> program
   aptstack backup [file.sql]       dump ทุก database ไป data\dumps\
   aptstack seed                    import database ตัวอย่าง (aptstack_demo)
   aptstack logs <apache|mysql|php> ดู log ท้ายไฟล์ (ตัวเลข = กี่บรรทัด, default 50)
@@ -3315,7 +3455,8 @@ switch ($Command.ToLower()) {
     'prev'        { Step-App -1 }
     'start'       { Cmd-Start }
     'run'         { Cmd-Run }
-    'stop'        { Cmd-Stop }
+    'stop'        { Cmd-Stop $Action }
+    'ports'       { Cmd-Ports $Action }
     'restart'     { Cmd-Restart }
     'status'      { Cmd-Status }
     'doctor'      { Cmd-Doctor }

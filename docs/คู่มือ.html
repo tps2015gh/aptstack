@@ -455,6 +455,12 @@ aptstack doctor            <span style="color:#6b7280">:: ต้องไม่�
 <p>ทำไมไม่พังเรื่อง path → <code>config\php.ini</code> และ <code>config\my.ini</code>
 <b>ถูก generate ใหม่ทุกครั้งที่ start</b> จากตำแหน่งที่รันจริง</p>
 
+<h2 id="s8b">8b. port ถูกจองโดย program อื่น</h2>
+<pre><code>aptstack ports              <span style="color:#6b7280">:: ดูพอร์ต + PID + path ของ exe</span>
+aptstack stop 3307          <span style="color:#6b7280">:: หยุดตัวที่จอง port นี้ (ถามถ้าไม่ใช่ของเรา)</span></code></pre>
+<p><code>[ours]</code> = ชุดนี้รันอยู่ · <code>[other]</code> = program อื่น (มักเป็น aptstack/XAMPP
+ที่เปิดค้าง) — จะบอก path ให้ copy ไปดู/หยุดให้ถูก</p>
+
 <h2 id="s8">8. แก้ปัญหาบ่อย</h2>
 <table>
 <tr><th>อาการ</th><th>สาเหตุ</th><th>แก้</th></tr>
