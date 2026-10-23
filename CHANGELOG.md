@@ -2,24 +2,33 @@
 
 ## Unreleased (หลัง 1.2.0)
 
-คำสั่งจัดการ version/ข้อมูล + รายงานสถานะ + เอกสารชุดแกนกลาง
+คำสั่งจัดการ version/ข้อมูล + รายงานสถานะ + พื้นที่ดิสก์ + ไดอะแกรม + เอกสารแกนกลาง
 
 ### Added
 
-- **`aptstack report`** — สร้างหน้า HTML สรุปสถานะทั้งหมด (ผล probe จริง, รายการตรวจสอบ
-  ✓/!/✗, เวอร์ชันที่ติดตั้ง, config, vhost, พื้นที่) ออกแบบให้ **พิมพ์ได้เลย (Ctrl+P A4)**
-- **`aptstack clone app <จาก> <เป็น>`** — ก้อปปี้โค้ด app (ยังไม่สลับให้ → `use` เอง) +
-  ย้ำว่า **DB ใช้ตัวเดิม** (ค่าอยู่กลางที่ `config\stack.json`)
+- **`aptstack run`** — dev console: start + ค้างหน้าจอ กด Ctrl+C หยุด (**ไม่ต้อง register service**)
+- **`aptstack size`** — ตารางพื้นที่ทุกโฟลเดอร์ + breakdown รายตัว (versions/stack/data)
+  + **เตือน bundle บวม / disk ใกล้เต็ม** (version>200MB, dumps>100MB, downloads/ชุด deploy ค้าง, free<10GB)
+- **`aptstack report`** มีหัวข้อ "พื้นที่/การบวมของดิสก์" แบบพิมพ์ได้ (แทน 3 แถวเดิม)
+- **`aptstack dist <app> [out] [nostack]`** — สร้างชุด deploy copy-paste
+  (`dist_paste\<app>\` มี **VERSIONS.txt** รายงาน version + **DEPLOY.txt** ขั้นตอน)
+- **`aptstack git init|status|clear`** — git ของ bundle บน server (track เฉพาะ scripts/docs)
+- **app family manifest** — `versions\<name>\.aptstack-version` (family/version)
+  → `list`/`size`/`report` แสดง `[todo] todo-app` vs `[todo] todo-1.1` รู้ทันทีว่า app เดียวกัน
+  · `clone` สืบทอด family อัตโนมัติ
+- **ไดอะแกรม**: `docs/diagrams.md` (Mermaid) + `docs/diagrams/*.svg` 5 ภาพ (vector เล็ก ~5KB)
+- **`docs/คู่มือ.md` ข้อ 7b — โหมด dev vs production** (ไม่ใช้ nginx · dev ไม่ต้อง service ·
+  production รัน manual ก่อนแล้ว `service install` ทีหลัง)
+- แผ่นจำ (cheat sheet) ใน README-TH
+- **`aptstack report`** (รุ่นก่อนหน้า) — หน้า HTML สรุปสถานะทั้งหมด (probe, checks ✓/!/✗,
+  เวอร์ชัน, config, vhost, พื้นที่) พิมพ์ได้เลย (Ctrl+P A4)
+- **`aptstack clone app <จาก> <เป็น>`** — ก้อปปี้โค้ด app (ยังไม่สลับให้ → `use` เอง · DB ใช้ตัวเดิม)
 - **`aptstack clone mysql <จาก> <เป็น>`** — คัดลอก datadir (บังคับ `stop` ก่อน + ยืนยัน)
-- **`aptstack remove app|php|apache|mysql <ชื่อ> [data]`** — ลบพร้อม
-  **แจ้งเตือน + ยืนยัน** · ปฏิเสธตัวที่ active · กัน path traversal ·
-  datadir ต้องยืนยันพิมพ์ `DELETE` (2 ชั้น) และ default **เก็บ data ไว้**
-- **`aptstack migrate mysql <ใหม่>`** — โยกข้อมูลไป engine ใหม่แบบ
-  dump → stop → switch → start → restore (ของเดิมไม่ถูกแตะ → rollback ได้)
-- **`-h` / `-?` / `--help` / `h` / `/?`** → โชว์ help (ก่อนหน้านี้พิมพ์แล้ว error)
-- เอกสารแกนกลางใหม่: **`ai.md`** (สำหรับ AI agent) · **`concept.md`** (สถาปัตยกรรม) ·
-  **`soul.md`** (เจตนารมณ์/เครดิต/สิ่งที่ไม่ทำ) · **`review.md`** (บั๊ค 25+ ที่เจอและแก้) ·
-  **`audit.md`** (security audit + compliance matrix + risk register)
+- **`aptstack remove app|php|apache|mysql <ชื่อ> [data]`** — ลบพร้อมแจ้งเตือน+ยืนยัน ·
+  ปฏิเสธตัวที่ active · กัน path traversal · datadir ต้องพิมพ์ `DELETE` (2 ชั้น)
+- **`aptstack migrate mysql <ใหม่>`** — โยกข้อมูลไป engine ใหม่ (dump → switch → restore)
+- **`-h` / `-?` / `--help`** → โชว์ help
+- เอกสารแกนกลาง: **`ai.md`** · **`concept.md`** · **`soul.md`** · **`review.md`** · **`audit.md`**
 
 ### Fixed
 
@@ -27,6 +36,10 @@
 - `report`: nested function ใช้ `$script:` ผิด scope → `op_Addition` error
 - `Confirm-Action`: อ่านคำตอบจาก stdin เมื่อ piped (`echo y | ...`) ได้แล้ว
 - prompt แสดงก่อนอ่านคำตอบเสมอ
+- `dist <app> <outRoot>`: path สัมพัทธ์ถูก resolve จาก CWD (ผิด) → แก้ให้เป็น root ของ bundle
+- `git init`: git เขียน warning ลง stderr → EAP=Stop โยน exception → กด EAP Continue
+- `service install`: ตรวจพอร์ตถูกจอง (manual ยังรันอยู่) → เตือน/ถามก่อนติดตั้ง
+- `size`: drive free ไม่ขึ้น (Get-PSDrive ต้องตัด `:` ออกจาก drive name)
 
 ---
 

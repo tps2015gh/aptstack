@@ -70,7 +70,7 @@ HTTPS/vhost → Service → backup</p>
   <b>เนื้อหา:</b>
   <a href="#s0">คืออะไร</a><a href="#s1">เริ่มใช้</a><a href="SCENARIO.md">Scenario ยาว</a><a href="#s2">คำสั่ง</a>
   <a href="#s3">สลับเวอร์ชัน</a><a href="#s4">สลับ PHP</a><a href="#s4b">สลับ Apache/MySQL</a><a href="#s5">XAMPP</a><a href="#s5a">HTTPS</a><a href="#s5b">vhosts</a><a href="#s5c">clone/remove</a>
-  <a href="#s6">Service</a><a href="#s7">ย้าย server</a><a href="#s8">แก้ปัญหา</a>
+  <a href="#s6">Service</a><a href="#s6b">dev/prod</a><a href="diagrams.md">ไดอะแกรม</a><a href="#s7">ย้าย server</a><a href="#s8">แก้ปัญหา</a>
   <a href="#s9">ความปลอดภัย</a><a href="#s10">โครงสร้าง</a>
 </div>
 
@@ -374,6 +374,32 @@ aptstack service status</code></pre>
 <li>ปิด stack แบบ clean (แตะ <code>config\stop.flag</code> แล้วรอ) ก่อน kill</li>
 </ul>
 <pre><code>aptstack service uninstall    <span style="color:#6b7280">:: ถอน (admin)</span></code></pre>
+
+<h2 id="s6b">6b. โหมด dev vs production (manual vs Service)</h2>
+<div class="box">
+<b>ไม่ใช้ nginx</b> — มี web engine แค่ <b>Apache + mod_php</b> หรือ <b>PHP built-in</b> (<code>webMode</code>)
+</div>
+
+<p><b>DEV (Win11 notebook)</b> — ไม่ต้อง register service เลย:</p>
+<pre><code>aptstack start        <span style="color:#6b7280">:: เปิด stack แบบ manual</span>
+aptstack run          <span style="color:#6b7280">:: แบบเดียวกัน แต่ค้างหน้าจอ กด Ctrl+C หยุด</span>
+aptstack stop</code></pre>
+
+<p><b>PROD (Windows Server)</b> — รัน manual ก่อนได้ แล้วค่อยทำ service ทีหลัง:</p>
+<pre><code>aptstack use todo-1.1
+aptstack start
+aptstack doctor            <span style="color:#6b7280">:: ต้องไม่มี [ERR]</span>
+
+<span style="color:#6b7280">:: มั่นใจแล้ว (Run as admin)</span>
+aptstack service install
+aptstack service start</code></pre>
+<ul>
+<li><code>service install</code> <b>ไม่บังคับ</b> — ใช้ <code>start</code>/<code>run</code> บน server ก็ได้ตลอด</li>
+<li>ติดตั้งตอน stack manual ยังรันอยู่ → <b>ระบบเตือน</b> ให้ <code>aptstack stop</code> ก่อน</li>
+<li>ถอน: <code>aptstack service uninstall</code></li>
+</ul>
+<p>เคสจริง notebook → server ไม่มีเน็ต: <code>aptstack dist</code> → copy → use/start/doctor
+· ภาพรวม: <a href="diagrams.md">diagrams.md</a> · ละเอียด: <a href="SCENARIO.md">SCENARIO.md</a></p>
 
 <h2 id="s7">7. ย้ายไปเครื่อง server</h2>
 <pre><code><span style="color:#6b7280">:: บนเครื่อง dev</span>

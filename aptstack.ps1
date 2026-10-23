@@ -137,17 +137,54 @@ function Save-Config($cfg) {
 }
 
 # ---------------------------------------------------------------- versions
+# ------------------------------------------------ app version metadata (family)
+# ชื่อโฟลเดอร์ = label อิสระ แต่เก็บ manifest เล็ก ๆ ไว้บอกว่า
+# "app ชื่ออะไร / เวอร์ชันอะไร" เพื่อให้ list/size/report จับกลุ่มได้ถูก
+function Get-AppMeta($dir) {
+    # fallback: todo-1.2.0 -> family=todo, ver=1.2.0 ; todo-app -> family=todo-app
+    $name = Split-Path $dir -Leaf
+    $fam = $name; $ver = $name
+    if ($name -match '^(.+?)[-_]v?(\d[\d.]*)$') { $fam = $Matches[1]; $ver = $Matches[2] }
+    $mf = Join-Path $dir '.aptstack-version'
+    if (Test-Path $mf) {
+        foreach ($l in (Get-Content $mf -EA SilentlyContinue)) {
+            if ("$l" -match '^\s*family\s*=\s*(.+)$') { $fam = "$($Matches[1])".Trim() }
+            if ("$l" -match '^\s*version\s*=\s*(.+)$') { $ver = "$($Matches[1])".Trim() }
+        }
+    }
+    return [pscustomobject]@{ Family = $fam; Version = $ver; HasManifest = (Test-Path $mf) }
+}
+
+function Set-AppMeta($dir, [string]$family, [string]$version) {
+    try {
+        if (-not (Test-Path $dir)) { return }
+        $name = Split-Path $dir -Leaf
+        # ไม่ระบุก็ derive จากชื่อ: todo-1.2.0 -> family=todo, version=1.2.0
+        if (-not $family -or -not $version) {
+            $f = $name; $v = $name
+            if ($name -match '^(.+?)[-_]v?(\d[\d.]*)$') { $f = $Matches[1]; $v = $Matches[2] }
+            if (-not $family) { $family = $f }
+            if (-not $version) { $version = $v }
+        }
+        Write-Utf8NoBom (Join-Path $dir '.aptstack-version') ("family=$family`r`nversion=$version`r`n")
+    } catch { }
+}
+
 function Get-AppVersions {
     if (-not (Test-Path $Script:P.Versions)) { return @() }
     $out = @()
     foreach ($d in (Get-ChildItem $Script:P.Versions -Directory -ErrorAction SilentlyContinue)) {
+        $meta = Get-AppMeta $d.FullName
         $out += [pscustomobject]@{
-            Name   = $d.Name
-            Dir    = $d.FullName
-            Usable = (Test-Path (Join-Path $d.FullName 'index.php'))
+            Name     = $d.Name
+            Dir      = $d.FullName
+            Usable   = (Test-Path (Join-Path $d.FullName 'index.php'))
+            Family   = $meta.Family
+            Version  = $meta.Version
+            HasMeta  = $meta.HasManifest
         }
     }
-    return ($out | Sort-Object { try { [version]$_.Name } catch { [version]'0.0.0' } })
+    return ($out | Sort-Object Family, { try { [version]$_.Version } catch { [version]'0.0.0' } }, Name)
 }
 
 function Get-CurrentAppName {
@@ -1235,6 +1272,7 @@ function Cmd-Add($kind, $source, $extra) {
             } else {
                 Expand-AndFlatten $src $dest
             }
+            Set-AppMeta $dest $null $null
             Set-SourceMeta $dest $kind $origSource
             Write-Ok "ติดตั้ง app $name เรียบร้อย"
             Write-Info "เปิดใช้: aptstack use $name"
@@ -1309,7 +1347,11 @@ function Cmd-List {
     foreach ($a in $apps) {
         $mark = if ($cur -eq $a.Name) { '*' } else { ' ' }
         $flag = if ($a.Usable) { '' } else { '  <- ไม่มี index.php' }
-        Write-Host "   $mark $($a.Name)  $($a.Dir)$flag" -ForegroundColor $(if ($flag) { 'Yellow' } else { 'Gray' })
+        $fam = if ($a.Family -ne $a.Name) { "  [$($a.Family)]" } else { '' }
+        Write-Host "   $mark $($a.Name)$fam  $($a.Dir)$flag" -ForegroundColor $(if ($flag) { 'Yellow' } else { 'Gray' })
+    }
+    if (@($apps | Where-Object { -not $_.HasMeta }).Count -gt 0) {
+        Write-Info 'หมายเหตุ: [ชื่อแอป] มาจาก heuristic ของชื่อโฟลเดอร์ — ถ้ากลุ่มผิด ให้ clone/add ใหม่ (ระบบจะสร้าง manifest .aptstack-version ให้)'
     }
 
     $phps = @(Get-PhpVersions)
@@ -1948,6 +1990,7 @@ function Cmd-Samples {
         if (Test-Path $dest) { Write-Info "มีแล้ว: versions\$($s.Name)"; continue }
         robocopy $s.FullName $dest /E /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
         if ($LASTEXITCODE -ge 8) { Write-Err2 "copy ล้มเหลว: $($s.Name)"; continue }
+        Set-AppMeta $dest $null $null
         Set-SourceMeta $dest 'app' "examples\$($s.Name)"
         Write-Ok "ติดตั้ง versions\$($s.Name)"
         $added++
@@ -2021,6 +2064,145 @@ function Cmd-Seed {
 }
 
 # ------------------------------------------------------------- printable report
+# ------------------------------------------------------------- disk / size report
+function Get-DirStat([string]$p) {
+    if (-not $p -or -not (Test-Path $p)) { return @{ MB = 0.0; Files = 0 } }
+    $m = Get-ChildItem $p -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum
+    return @{ MB = [math]::Round(($m.Sum / 1MB), 1); Files = [int]$m.Count }
+}
+
+function Get-SizeInfo {
+    # รวมสถิติพื้นที่ทั้ง bundle + เตือน "บวม/ดิสก์ใกล้เต็ม" (ใช้โดย report + size)
+    $top = @('stack', 'versions', 'data', 'www', 'config', 'logs', 'downloads',
+             'dist_paste', 'dist', 'docs', 'examples', 'templates', 'bin', 'service')
+    $folders = @()
+    $totalMB = 0.0
+    foreach ($n in $top) {
+        $s = Get-DirStat (Join-Path $Root $n)
+        $totalMB += $s.MB
+        $folders += [pscustomobject]@{ Name = $n; MB = $s.MB; Files = $s.Files; Pct = 0 }
+    }
+    $rootSelf = Get-DirStat $Root
+    $totalMB = [math]::Round($rootSelf.MB, 1)
+    if ($totalMB -le 0) { $totalMB = 0.01 }
+    $folders = foreach ($f in $folders) {
+        [pscustomobject]@{ Name = $f.Name; MB = $f.MB; Files = $f.Files; Pct = [math]::Round(100 * $f.MB / $totalMB, 1) }
+    }
+
+    # breakdown รายตัว
+    $vers = @()
+    if (Test-Path $Script:P.Versions) {
+        foreach ($d in (Get-ChildItem $Script:P.Versions -Directory -EA SilentlyContinue)) {
+            $s = Get-DirStat $d.FullName
+            $meta = Get-AppMeta $d.FullName
+            $vers += [pscustomobject]@{ Name = $d.Name; Family = $meta.Family; Ver = $meta.Version; MB = $s.MB; Files = $s.Files }
+        }
+        $vers = @($vers | Sort-Object Family, Ver)
+    }
+    $stackParts = @()
+    foreach ($sub in @('php', 'apache', 'mysql')) {
+        $sp = Join-Path $Script:P.Stack $sub
+        if (Test-Path $sp) {
+            foreach ($d in (Get-ChildItem $sp -Directory -EA SilentlyContinue)) {
+                $s = Get-DirStat $d.FullName
+                $stackParts += [pscustomobject]@{ Name = "$sub\$($d.Name)"; MB = $s.MB; Files = $s.Files }
+            }
+        }
+    }
+    $stackParts = @($stackParts | Sort-Object MB -Descending)
+
+    $dumps = @(Get-ChildItem $Script:P.Dumps -Filter '*.sql' -EA SilentlyContinue)
+    $dumpsMB = [math]::Round((($dumps | Measure-Object Length -Sum).Sum / 1MB), 1)
+    $dataParts = @()
+    foreach ($m in @(Get-MySqlVersions)) {
+        $dd = Get-DataDir $m
+        $s = Get-DirStat $dd
+        $dataParts += [pscustomobject]@{ Name = "datadir $($m.Name)"; MB = $s.MB; Files = $s.Files }
+    }
+    $dataParts += [pscustomobject]@{ Name = 'dumps (backup *.sql)'; MB = $dumpsMB; Files = $dumps.Count }
+
+    $freeGB = $null
+    try {
+        $driveName = (Split-Path -Qualifier $Root).TrimEnd(':')
+        $freeGB = [math]::Round(((Get-PSDrive -Name $driveName -ErrorAction Stop).Free / 1GB), 1)
+    } catch { }
+
+    # ---- เตือน "บวม/ดิสก์ใกล้เต็ม" ----
+    $warns = @()
+    function W($lv, $t) { $script:SizeWarns += [pscustomobject]@{ Level = $lv; Text = $t } }
+    $script:SizeWarns = @()
+    foreach ($v in $vers) { if ($v.MB -gt 200) { W 'WARN' ("versions\$($v.Name) ใหญ่ $($v.MB) MB — ถ้าเป็นโค้ดอย่างเดียวควรเล็กกว่านี้ ตรวจว่ามี vendor/node_modules ติดมาไหม" ) } }
+    if ($dumpsMB -gt 100) { W 'WARN' "data\dumps รวม $dumpsMB MB — เก็บ backup ไว้นอก bundle แล้วลบออกจาก server" }
+    $dl = Get-DirStat (Join-Path $Root 'downloads')
+    if ($dl.MB -gt 100) { W 'WARN' "downloads\ ใหญ่ $($dl.MB) MB — zip ที่ add แล้วไม่ต้องเก็บ ลบทิ้งได้" }
+    foreach ($dp in @('dist_paste', 'dist')) {
+        $s = Get-DirStat (Join-Path $Root $dp)
+        if ($s.MB -gt 0) { W 'WARN' "$dp\ ใหญ่ $($s.MB) MB — ชุด deploy เก่า ก่อน copy ขึ้น server ให้ลบก่อน (หรือย้ายออก)" }
+    }
+    if ($totalMB -gt 1500) { W 'WARN' "รวม bundle $([math]::Round($totalMB/1024,2)) GB — ใหญ่สำหรับ copy-paste ลอง aptstack dist (เลือกเอาเฉพาะที่จำเป็น)" }
+    if ($null -ne $freeGB -and $freeGB -lt 10) { W 'ERR' "พื้นที่ว่างบนไดรฟ์เหลือแค่ $freeGB GB — เสี่ยง disk เต็มตอนแตกไฟล์/เพิ่ม version" }
+
+    return [pscustomobject]@{
+        Folders    = $folders
+        Versions   = $vers
+        StackParts = $stackParts
+        DataParts  = $dataParts
+        DumpsCount = $dumps.Count
+        DumpsMB    = $dumpsMB
+        TotalMB    = $totalMB
+        FreeGB     = $freeGB
+        Warnings   = @($script:SizeWarns)
+    }
+}
+
+function Show-SizeCli($sz) {
+    Write-Head ("พื้นที่ทั้ง bundle: {0:N1} MB" -f $sz.TotalMB)
+    if ($null -ne $sz.FreeGB) {
+        $fc = if ($sz.FreeGB -lt 10) { 'Red' } elseif ($sz.FreeGB -lt 30) { 'Yellow' } else { 'Gray' }
+        Write-Host ("  พื้นที่ว่างบนไดรฟ์: {0} GB" -f $sz.FreeGB) -ForegroundColor $fc
+    }
+    Write-Host ''
+    Write-Host ('  {0,-14} {1,10} {2,8} {3,7}' -f 'โฟลเดอร์', 'MB', 'ไฟล์', '%') -ForegroundColor White
+    foreach ($f in $sz.Folders) {
+        if ($f.MB -le 0 -and $f.Files -eq 0) { continue }
+        $c = if ($f.Pct -ge 40) { 'Yellow' } else { 'Gray' }
+        Write-Host ('  {0,-14} {1,10:N1} {2,8} {3,6:N1}%' -f $f.Name, $f.MB, $f.Files, $f.Pct) -ForegroundColor $c
+    }
+    Write-Host ('  {0,-14} {1,10:N1}' -f 'รวม (ทั้ง root)', $sz.TotalMB) -ForegroundColor White
+
+    if ($sz.Versions.Count -gt 0) {
+        Write-Host ''
+        Write-Host '  รายตัว versions\  ([ชื่อ] = app family — app เดียวกัน หรือคนละ app)' -ForegroundColor White
+        foreach ($v in $sz.Versions) {
+            $c = if ($v.MB -gt 200) { 'Yellow' } else { 'Gray' }
+            $fam = if ($v.PSObject.Properties['Family'] -and $v.Family) { "[$($v.Family)]" } else { '[?]' }
+            Write-Host ('    {0,-14} {1,-20} {2,9:N1} MB  {3,6} ไฟล์' -f $fam, $v.Name, $v.MB, $v.Files) -ForegroundColor $c
+        }
+    }
+    if ($sz.StackParts.Count -gt 0) {
+        Write-Host ''
+        Write-Host '  รายตัว stack\' -ForegroundColor White
+        foreach ($v in $sz.StackParts) { Write-Host ('    {0,-28} {1,9:N1} MB' -f $v.Name, $v.MB) -ForegroundColor Gray }
+    }
+    if ($sz.DataParts.Count -gt 0) {
+        Write-Host ''
+        Write-Host '  รายตัว data\' -ForegroundColor White
+        foreach ($v in $sz.DataParts) { Write-Host ('    {0,-28} {1,9:N1} MB  {2,6} ไฟล์' -f $v.Name, $v.MB, $v.Files) -ForegroundColor Gray }
+    }
+    Write-Host ''
+    if ($sz.Warnings.Count -eq 0) { Write-Ok 'พื้นที่ปกติ ไม่มีอะไรบวมผิดปกติ' }
+    else {
+        foreach ($w in $sz.Warnings) {
+            if ($w.Level -eq 'ERR') { Write-Err2 $w.Text } else { Write-Warn2 $w.Text }
+        }
+    }
+    Write-Info 'รายละเอียดเต็ม + ตารางพิมพ์ได้: aptstack report'
+}
+
+function Cmd-Size {
+    Show-SizeCli (Get-SizeInfo)
+}
+
 function Cmd-Report([string]$OutPath) {
     # สรุปสถานะการติดตั้งทั้งหมดเป็น HTML สำหรับเปิดดู/พิมพ์เครื่องพิมพ์
     Ensure-Dirs
@@ -2115,14 +2297,8 @@ function Cmd-Report([string]$OutPath) {
 
     $checks = @($script:RepChecks)
 
-    # ---- ขนาด ----
-    function Get-DirSizeMB($p) {
-        if (-not (Test-Path $p)) { return 0 }
-        [math]::Round(((Get-ChildItem $p -Recurse -File -EA SilentlyContinue | Measure-Object Length -Sum).Sum / 1MB), 1)
-    }
-    $sizeStack = Get-DirSizeMB $Script:P.Stack
-    $sizeVers = Get-DirSizeMB $Script:P.Versions
-    $sizeData = Get-DirSizeMB $Script:P.Data
+    # ---- ขนาด/พื้นที่ (ตัวเดียวกับ aptstack size) ----
+    $sz = Get-SizeInfo
     $datadir = if ($mysql) { Get-DataDir $mysql } else { '' }
 
     # ---- นับผล checks ----
@@ -2161,6 +2337,31 @@ function Cmd-Report([string]$OutPath) {
     $dt = Get-Date
     $stamp = $dt.ToString('yyyy-MM-dd HH:mm:ss')
 
+    # rows สำหรับรายงานพื้นที่
+    $sizeRows = New-Object Text.StringBuilder
+    foreach ($f in $sz.Folders) {
+        if ($f.MB -le 0 -and $f.Files -eq 0) { continue }
+        [void]$sizeRows.AppendLine("<tr><td>$($f.Name)\</td><td class='num'>$($f.MB)</td><td class='num'>$($f.Files)</td><td class='num'>$($f.Pct)%</td></tr>")
+    }
+    $versSzRows = New-Object Text.StringBuilder
+    foreach ($v in $sz.Versions) {
+        $cls = if ($v.MB -gt 200) { " class='warnrow'" } else { '' }
+        $fam = if ($v.PSObject.Properties['Family'] -and $v.Family) { $v.Family } else { '?' }
+        [void]$versSzRows.AppendLine("<tr$cls><td>$([Net.WebUtility]::HtmlEncode($fam))</td><td>$([Net.WebUtility]::HtmlEncode($v.Name))</td><td class='num'>$($v.MB) MB</td><td class='num'>$($v.Files)</td></tr>")
+    }
+    $stackSzRows = New-Object Text.StringBuilder
+    foreach ($v in $sz.StackParts) { [void]$stackSzRows.AppendLine("<tr><td class='path'>$([Net.WebUtility]::HtmlEncode($v.Name))</td><td class='num'>$($v.MB) MB</td><td class='num'>$($v.Files)</td></tr>") }
+    $dataSzRows = New-Object Text.StringBuilder
+    foreach ($v in $sz.DataParts) { [void]$dataSzRows.AppendLine("<tr><td>$([Net.WebUtility]::HtmlEncode($v.Name))</td><td class='num'>$($v.MB) MB</td><td class='num'>$($v.Files)</td></tr>") }
+    $szWarnHtml = New-Object Text.StringBuilder
+    if ($sz.Warnings.Count -eq 0) { [void]$szWarnHtml.AppendLine('<p class="ok">พื้นที่ปกติ — ไม่มีอะไรบวมผิดปกติ</p>') }
+    else {
+        foreach ($w in $sz.Warnings) {
+            $c = if ($w.Level -eq 'ERR') { 'err' } else { 'warn' }
+            [void]$szWarnHtml.AppendLine("<p class='$c'>$(if($w.Level -eq 'ERR'){'✗'}else{'!'}) $([Net.WebUtility]::HtmlEncode($w.Text))</p>")
+        }
+    }
+
     $html = @"
 <!DOCTYPE html>
 <html lang="th"><head><meta charset="utf-8">
@@ -2183,6 +2384,8 @@ function Cmd-Report([string]$OutPath) {
   .card{border:1px solid #8a8f98;padding:8px 10px;min-width:210px;flex:1}
   .card b{display:block;font-size:12px;color:#10306b}
   .kv{width:100%}.kv td:first-child{width:190px;background:#f7f8fa;font-weight:600}
+  .num{text-align:right}
+  .warnrow td{background:#fff6e5}
   .small{font-size:11.5px;color:#333}
   footer{margin-top:16px;padding-top:8px;border-top:1px solid #8a8f98;font-size:11.5px;color:#333}
   .noprint{color:#666;font-size:11.5px}
@@ -2249,14 +2452,34 @@ $($sb.ToString())
 <table><tr><th>host</th><th>app</th><th>https</th></tr>$($vhRows.ToString())</table>
 $(if($vhItems.Count -gt 0){'<p class="small">ต้องเพิ่มใน hosts file: 127.0.0.1 ' + [Net.WebUtility]::HtmlEncode((($vhItems | ForEach-Object { "$($_.host)" }) -join ' ')) + '</p>'})
 
-<h2>7. พื้นที่และข้อมูล</h2>
-<table class="kv">
-<tr><td>stack\ (binary)</td><td>$sizeStack MB</td></tr>
-<tr><td>versions\ (โค้ดแอป)</td><td>$sizeVers MB · $($apps.Count) เวอร์ชัน</td></tr>
-<tr><td>data\ (ฐานข้อมูล)</td><td>$sizeData MB$(if($datadir){" · datadir: <span class='path'>$([Net.WebUtility]::HtmlEncode($datadir))</span>"})</td></tr>
-<tr><td>data\dumps</td><td>$dumpCount ไฟล์ .sql</td></tr>
-<tr><td>config\</td><td class="path">$([Net.WebUtility]::HtmlEncode($Script:P.ConfigDir))</td></tr>
+<h2>7. พื้นที่ / การบวมของดิสก์</h2>
+<p class="small">รวมทั้ง bundle: <b>$([math]::Round($sz.TotalMB/1024,2)) GB ($($sz.TotalMB) MB)</b>
+$(if($null -ne $sz.FreeGB){' · พื้นที่ว่างบนไดรฟ์: <b>'+$sz.FreeGB+' GB</b>'})
+&nbsp;·&nbsp; คำสั่ง CLI: <code>aptstack size</code></p>
+<table>
+<tr><th>โฟลเดอร์</th><th style="width:90px">MB</th><th style="width:80px">ไฟล์</th><th style="width:64px">%</th></tr>
+$($sizeRows.ToString())
 </table>
+
+<p class="small"><b>รายตัวversions\ (ระวังอันไหนใหญ่ผิดปกติ)</b></p>
+<table>
+<tr><th style="width:130px">แอป (family)</th><th>ชื่อเวอร์ชัน (โฟลเดอร์)</th><th style="width:100px">ขนาด</th><th style="width:80px">ไฟล์</th></tr>
+$(if($versSzRows.Length -gt 0){$versSzRows.ToString()}else{'<tr><td colspan="3">(ยังไม่มี)</td></tr>'})
+</table>
+
+<table>
+<tr><th>stack\ (binary)</th><th style="width:100px">ขนาด</th><th style="width:80px">ไฟล์</th></tr>
+$(if($stackSzRows.Length -gt 0){$stackSzRows.ToString()}else{'<tr><td colspan="3">(ยังไม่มี)</td></tr>'})
+</table>
+
+<table>
+<tr><th>data\</th><th style="width:100px">ขนาด</th><th style="width:80px">ไฟล์</th></tr>
+$(if($dataSzRows.Length -gt 0){$dataSzRows.ToString()}else{'<tr><td colspan="3">(ยังไม่มี)</td></tr>'})
+</table>
+
+<div class="card">$($szWarnHtml.ToString())</div>
+<p class="small">config\: <code>$([Net.WebUtility]::HtmlEncode($Script:P.ConfigDir))</code>
+· datadir: <code>$(if($datadir){[Net.WebUtility]::HtmlEncode($datadir)}else{'-'})</code></p>
 
 <h2>8. คำสั่งที่ใช้บ่อย</h2>
 <table class="kv">
@@ -2331,6 +2554,8 @@ function Cmd-Clone($what, $from, $to) {
             if (-not (Confirm-Action "คัดลอกโค้ด $mb MB จาก versions\$from ไป versions\$to ?")) { Write-Info 'ยกเลิก'; return }
             robocopy $src $dst /E /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
             if ($LASTEXITCODE -ge 8) { throw "copy ล้มเหลว (robocopy exit $LASTEXITCODE)" }
+            # clone -> สืบทอด family จากต้นทาง แล้วตั้ง version = ชื่อปลายทาง
+            Set-AppMeta $dst (Get-AppMeta $src).Family $to
             Set-SourceMeta $dst 'app' "clone of versions\$from"
             Write-Ok "คัดลอกแล้ว: versions\$to ($mb MB)"
             Write-Info "ยังอยู่เวอร์ชันเดิม: $cur (ระบบไม่สลับให้อัตโนมัติ)"
@@ -2533,6 +2758,217 @@ function Cmd-Migrate($what, $to) {
     Cmd-Status
 }
 
+function Cmd-Run {
+    # dev console: start แบบ manual (ไม่ต้อง register Windows Service) + บล็อกหน้าจอ
+    # กด Ctrl+C -> finally จะ stop ทั้งหมด (production: aptstack service install)
+    Write-Head 'run — dev console (ไม่ต้องติดตั้ง Windows Service)'
+    Write-Info 'โหมด dev/ทดสอบ · production ใช้: aptstack service install แล้ว service start'
+    Write-Info 'web engine: ไม่มี nginx — ใช้ Apache+mod_php หรือ PHP built-in server เท่านั้น'
+    Cmd-Start
+    Write-Host ''
+    Write-Info 'รันอยู่เบื้องหลังแล้ว — กด Ctrl+C เพื่อหยุดทั้งหมด'
+    Write-Info 'ดู log: aptstack logs <apache|mysql|php>'
+    try {
+        while ($true) {
+            Start-Sleep -Seconds 3
+            $cfg = Get-Config
+            $webUp = [bool](Test-Running 'web')
+            $dbUp = [bool](Test-Running 'mysql')
+            Write-Host ("  [{0:HH:mm:ss}]  web={1}   db={2}   app={3}" -f (Get-Date),
+                $(if ($webUp) { 'up' } else { 'DOWN' }),
+                $(if ($dbUp -or "$($cfg.dbMode)" -eq 'external') { 'up' } else { 'DOWN' }),
+                (Get-CurrentAppName))
+        }
+    } finally {
+        Write-Host ''
+        Write-Warn2 'หยุด stack (dev console)'
+        Cmd-Stop
+    }
+}
+
+function Cmd-Dist($appVer, $outRoot, $extra) {
+    # สร้างชุด deploy แบบ copy-paste ได้ทันที: dist_paste\<appver>\
+    # รวม scripts + app code + (ถ้าไม่บอก nostack) binary ทั้งหมด + www + config บางส่วน
+    # ไม่รวม: data (DB), config ที่ generate, certs, logs, .git  -> server สร้างเองตอน start
+    Ensure-Dirs
+    if (-not $appVer) { $appVer = Get-CurrentAppName }
+    if (-not $appVer) { throw 'ไม่ได้ระบุ app และยังไม่มีตัว active — ใช้: aptstack dist <ชื่อapp> [outRoot] [nostack]' }
+    $hit = Resolve-App $appVer
+    if (-not $hit) { throw "ไม่พบ versions\$appVer (ดูชื่อ: aptstack list)" }
+    if (-not $outRoot) { $outRoot = Join-Path $Root 'dist_paste' }
+    # path สัมพัทธ์ต้องอ้างถึง root ของ bundle (ไม่ใช่ CWD ของคนเรียก)
+    if ($outRoot -notmatch '^[A-Za-z]:[\\/]') { $outRoot = Join-Path $Root $outRoot }
+    $dest = Join-Path $outRoot $hit.Name
+    $noStack = "$extra".ToLower() -in @('nostack', '-nostack')
+    $noPma = "$extra".ToLower() -in @('nopma', '-nopma', 'nostack-nopma', 'nopma-nostack')
+    if (Test-Path $dest) { throw "มีอยู่แล้ว: $dest — ลบก่อนหรือเปลี่ยน outRoot/outName" }
+
+    $cfg = Get-Config
+    $php = Resolve-Php $cfg.php
+    $apache = Resolve-Apache $cfg.apache
+    $mysql = Resolve-MySql $cfg.mysql
+    $wm = Resolve-WebMode $cfg $php $apache
+    $pkgVer = if (Test-Path (Join-Path $Root 'VERSION')) { (Get-Content (Join-Path $Root 'VERSION') -Raw).Trim() } else { '?' }
+
+    Write-Head "สร้างชุด deploy (copy-paste) สำหรับ app '$($hit.Name)'"
+    Write-Info "ปลายทาง: $dest"
+    if ($noStack) { Write-Warn2 'โหมด nostack — ไม่รวม binary (ต้องมี stack\ บน server อยู่แล้ว)' }
+
+    New-Item -ItemType Directory -Path $dest -Force | Out-Null
+
+    # 1) ตัวสคริปต์หลัก
+    foreach ($f in @('aptstack.cmd', 'as.cmd', 'aptstack.ps1', 'setup.ps1', 'service.ps1', 'VERSION')) {
+        $src = Join-Path $Root $f
+        if (Test-Path $src) { Copy-Item $src $dest -Force }
+    }
+    foreach ($d in @('templates', 'examples', 'docs', 'service')) {
+        $src = Join-Path $Root $d
+        if (Test-Path $src) { robocopy $src (Join-Path $dest $d) /E /NFL /NDL /NJH /NJS /R:1 /W:1 /MT:8 | Out-Null }
+    }
+    foreach ($f in @('README-TH.md', 'README.md', 'SECURITY.md', 'CHANGELOG.md', 'ai.md', 'concept.md')) {
+        $src = Join-Path $Root $f
+        if (Test-Path $src) { Copy-Item $src $dest -Force }
+    }
+
+    # 2) app code (ตัวเดียว)
+    New-Item -ItemType Directory -Path (Join-Path $dest 'versions') -Force | Out-Null
+    robocopy $hit.Dir (Join-Path $dest "versions\$($hit.Name)") /E /NFL /NDL /NJH /NJS /R:1 /W:1 /MT:8 | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw 'copy app ล้มเหลว' }
+
+    # 3) www — คัดลอกเฉพาะไฟล์จริง (ไม่เอา junction เพื่อหลบ path เดิม)
+    New-Item -ItemType Directory -Path (Join-Path $dest 'www') -Force | Out-Null
+    foreach ($f in @('router.php', 'index.php')) {
+        $src = Join-Path (Join-Path $Root 'www') $f
+        if (Test-Path $src) { Copy-Item $src (Join-Path $dest 'www') -Force }
+    }
+    $pma = Join-Path (Join-Path $Root 'www') 'phpmyadmin'
+    if ((Test-Path $pma) -and -not $noPma) {
+        robocopy $pma (Join-Path $dest 'www\phpmyadmin') /E /NFL /NDL /NJH /NJS /R:1 /W:1 /MT:8 | Out-Null
+    }
+
+    # 4) config เฉพาะที่ต้องใช้ต่อ (ไม่เอาของ generate/secret runtime)
+    New-Item -ItemType Directory -Path (Join-Path $dest 'config') -Force | Out-Null
+    foreach ($f in @('stack.json', 'vhosts.json')) {
+        $src = Join-Path (Join-Path $Root 'config') $f
+        if (Test-Path $src) { Copy-Item $src (Join-Path $dest 'config') -Force }
+    }
+
+    # 5) binary (ยกเว้น nostack)
+    if (-not $noStack) {
+        Write-Info 'กำลังคัดลอก stack\ (PHP/Apache/MariaDB) — อาจใช้เวลาสักครู่...'
+        robocopy (Join-Path $Root 'stack') (Join-Path $dest 'stack') /E /NFL /NDL /NJH /NJS /R:1 /W:1 /MT:8 | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw 'copy stack ล้มเหลว' }
+    }
+
+    # 6) รายงาน version + ขั้นตอน deploy
+    $szAll = Get-FolderSizeMB $dest
+    $built = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $verRep = @"
+================================================================================
+ aptstack dist — รายงาน version ของชุด deploy นี้
+================================================================================
+  สร้างเมื่อ            : $built
+  แพ็กเกจ aptstack      : $pkgVer
+  App version           : $($hit.Name)          (จาก versions\$($hit.Name))
+  PHP                   : $(if ($php) { $php.Version } else { '(ยังไม่ตั้ง)' })
+  Apache                : $(if ($apache) { $apache.Version } else { '(ไม่รวม)' })
+  MySQL/MariaDB         : $(if ($mysql) { $mysql.Version } else { '(ไม่รวม)' })
+  webMode               : $wm
+  httpPort / dbPort     : $($cfg.httpPort) / $($cfg.dbPort)
+  httpsEnabled          : $($cfg.httpsEnabled)
+  appAlias (URL path)   : /$($cfg.appAlias)/
+  ขนาดชุด deploy        : $szAll MB
+  รวม binary (stack\)   : $(if ($noStack) { 'ไม่รวม (nostack)' } else { 'รวม' })
+================================================================================
+
+  ตรวจ version บน server ได้ตลอด:  aptstack list
+  สร้างรายงาน HTML พิมพ์ได้:        aptstack report
+"@
+    [IO.File]::WriteAllText((Join-Path $dest 'VERSIONS.txt'), (($verRep -replace "`n", "`r`n") + "`r`n"), [Text.Encoding]::UTF8)
+
+    $deploy = @"
+================================================================================
+ วิธี deploy ชุดนี้ (copy-paste ขึ้น server ที่ไม่มีเน็ตก็ได้)
+================================================================================
+
+ 1) copy ทั้งโฟลเดอร์นี้ไป server ด้วยวิธีใดก็ได้
+      - RDP: แนะนำใช้ drive redirection หรือ shared folder
+        (คัดลอก-วางตรง ๆ ผ่าน RDP ช้ามากกับไฟล์เล็ก ๆ หลายพันไฟล์)
+      - USB / share ใน LAN
+
+ 2) บน server เปิด cmd ที่โฟลเดอร์นี้
+      cd /d E:\path\to\$($hit.Name)
+      aptstack use $($hit.Name)
+      aptstack start
+      aptstack doctor
+
+ 3) เปิด http://127.0.0.1:$($cfg.httpPort)/$($cfg.appAlias)/
+
+ หมายเหตุ
+  - ไม่ต้องติดตั้ง Windows Service ก็ใช้ได้ (dev ใช้ aptstack start/run ก็พอ)
+  - เมื่อพร้อมขึ้นจริง (ต้องการให้บูตเอง):
+        aptstack service install
+        aptstack service start
+  - ถ้าจะเปลี่ยน PHP/MySQL/Apache บน server (ตอนโดน audit สั่งเปลี่ยน):
+        คัดลอก zip ของตัวใหม่เข้าไป แล้ว
+        aptstack add php 8.3.36     (หรือ add php <path\to\zip>)
+        aptstack use php 8.3.36
+        aptstack doctor
+  - ย้อนกลับ: aptstack use php <ver เก่า>  (ของเก่ายังอยู่ครบ)
+================================================================================
+"@
+    [IO.File]::WriteAllText((Join-Path $dest 'DEPLOY.txt'), (($deploy -replace "`n", "`r`n") + "`r`n"), [Text.Encoding]::UTF8)
+
+    Write-Ok ("สร้างแล้ว: $dest  ({0:N1} MB)" -f $szAll)
+    Write-Info 'ข้างในมี: VERSIONS.txt (รายงาน version) + DEPLOY.txt (ขั้นตอน)'
+    Write-Info "บน server: cd เข้าโฟลเดอร์ -> aptstack use $($hit.Name) -> aptstack start -> aptstack doctor"
+    Write-Info 'ไฟล์ที่ "ไม่ได้เอาไป": data\, logs\, config ที่ generate, certs, .git (server สร้างเองตอน start)'
+}
+
+function Cmd-Git($action, $name) {
+    # จัดการ git "ของ bundle นี้" (ใช้ตอนเอาไปวางบน server)
+    # - init : git init + commit แรก (เก็บเฉพาะ scripts/templates/docs — .gitignore กัน data/binary อยู่แล้ว)
+    # - status: ดูสั้น ๆ
+    # - clear : ลบ .git (ทำให้เป็น folder ลอย ๆ ใหม่) ต้องยืนยัน
+    # * dist_paste ไม่ได้เอา .git ของ dev ไปด้วยตั้งแต่แรก → ไม่มีทางติด history เดิม
+    $gitDir = Join-Path $Root '.git'
+    $hasGit = Test-Path $gitDir
+    switch ("$action".ToLower()) {
+        'init' {
+            if ($hasGit) { Write-Warn2 "มี .git อยู่แล้วที่ $gitDir — ถ้าอยากเริ่มใหม่: aptstack git clear ก่อน"; return }
+            $gitExe = Get-Command git -EA SilentlyContinue
+            if (-not $gitExe) { throw 'ไม่พบ git.exe ใน PATH — ติดตั้ง Git for Windows ก่อน' }
+            Write-Head 'git init (ของ bundle นี้ — เผื่อ track การแก้ config/scripts บน server)'
+            # git เขียน warning ลง stderr (เช่น LF->CRLF) -> ต้องกด EAP ไม่งั้นโยน exception
+            $oldEap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            & git -C $Root init 2>&1 | Out-Null
+            & git -C $Root add -A 2>&1 | Out-Null
+            $n = @(& git -C $Root ls-files).Count
+            & git -C $Root -c user.name='aptstack' -c user.email='aptstack@local' commit -q -m 'aptstack: initial commit (scripts/templates/docs only)' 2>&1 | Out-Null
+            $ErrorActionPreference = $oldEap
+            Write-Ok "git init แล้ว — track $n ไฟล์ (data/binary/config ถูก .gitignore กันแล้ว)"
+            Write-Info 'สำคัญ: อย่า add ไฟล์มือในโฟลเดอร์ที่ถูก ignore (data/, stack/, versions/, config/)'
+            Write-Info 'ก่อน zip/copy กลับ: ถ้าไม่อยากเอา history ไปด้วย -> aptstack git clear'
+        }
+        'status' {
+            if (-not $hasGit) { Write-Info 'ยังไม่ได้ git init ใน bundle นี้ (ไม่บังคับ — ใช้ aptstack ก็พอ)'; return }
+            Write-Head 'git status (bundle นี้)'
+            & git -C $Root status -sb 2>&1 | Select-Object -First 40 | ForEach-Object { Write-Host "  $_" }
+        }
+        'clear' {
+            if (-not $hasGit) { Write-Info 'ไม่มี .git อยู่แล้ว'; return }
+            Write-Head 'ลบ .git ออกจาก bundle (ทำให้เป็น folder ลอย ๆ)'
+            Write-Warn2 'จะเสียประวัติ commit ใน "สำเนานี้" เท่านั้น — ไฟล์งานไม่หาย'
+            Write-Info "เป้าหมาย: $gitDir"
+            if (-not (Confirm-Action "พิมพ์ y เพื่อลบ .git ในโฟลเดอร์นี้")) { Write-Info 'ยกเลิก'; return }
+            Remove-Item -LiteralPath $gitDir -Recurse -Force
+            Write-Ok 'ลบ .git แล้ว — ใช้เป็น portable folder ต่อได้เลย (git init ใหม่ได้ทุกเมื่อ)'
+        }
+        default { throw "ใช้: aptstack git <init|status|clear>" }
+    }
+}
+
 function Cmd-Help {
     Write-Head 'aptstack — portable PHP / MariaDB / app-version manager'
     @'
@@ -2566,6 +3002,7 @@ function Cmd-Help {
 
   ── เปิด/ปิด ──────────────────────────────────────────
   aptstack start | stop | restart
+  aptstack run                   dev console: start + บล็อกหน้าจอ กด Ctrl+C หยุด (ไม่ต้อง register service)
   aptstack status
   aptstack backup [file.sql]       dump ทุก database ไป data\dumps\
   aptstack seed                    import database ตัวอย่าง (aptstack_demo)
@@ -2585,6 +3022,9 @@ function Cmd-Help {
   aptstack remove php|apache|mysql <ชื่อ> [data]  ลบ binary (data เก็บไว้ เว้นแต่ใส่ data แล้วยืนยัน DELETE)
   aptstack migrate mysql <ใหม่>    โยกข้อมูล DB ไป engine ใหม่ (dump -> switch -> restore)
   aptstack report [path]           สร้างหน้า HTML สรุปสถานะทั้งหมด (เปิดให้ + พิมพ์ได้)
+  aptstack size                    ดูพื้นที่ทุกโฟลเดอร์ + เตือน bundle บวม / ดิสก์ใกล้เต็ม
+  aptstack dist <app> [out] [nostack]  สร้างชุด deploy copy-paste (มี VERSIONS.txt + DEPLOY.txt)
+  aptstack git init|status|clear   git ของ bundle บน server (track config เฉย ๆ / ลบ .git)
 
   ── Windows Service ──────────────────────────────────
   aptstack service install         ติดตั้ง service (ต้อง Run as admin)
@@ -2639,6 +3079,7 @@ switch ($Command.ToLower()) {
     'next'        { Step-App 1 }
     'prev'        { Step-App -1 }
     'start'       { Cmd-Start }
+    'run'         { Cmd-Run }
     'stop'        { Cmd-Stop }
     'restart'     { Cmd-Restart }
     'status'      { Cmd-Status }
@@ -2647,6 +3088,9 @@ switch ($Command.ToLower()) {
     'seed'        { Cmd-Seed }
     'samples'     { Cmd-Samples }
     'report'      { Cmd-Report $Action }
+    'size'        { Cmd-Size }
+    'dist'        { Cmd-Dist $Action $Value $Extra }
+    'git'         { Cmd-Git $Action $Value }
     'clone'       { Cmd-Clone $Action $Value $Extra }
     'remove'      { Cmd-Remove $Action $Value $Extra }
     'rm'          { Cmd-Remove $Action $Value $Extra }

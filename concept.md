@@ -93,6 +93,8 @@ resolve versions\<x> → stop web → ย้าย junction www\<alias> → save
 | PHP built-in ยังอยู่ | ไม่ต้องมี Apache ก็ลองได้ (ของเดิมเป็นแบบนี้) | ตัดออก |
 | seed SQL ผ่าน `-RedirectStandardInput` | PS pipe ทำให้ไทยเป็น `???` | `Get-Content | client` |
 
+> ดูเป็นภาพ (SVG + Mermaid): [docs/diagrams.md](docs/diagrams.md)
+
 ## 5. แผนที่โฟลเดอร์ (runtime)
 
 ```

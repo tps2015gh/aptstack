@@ -11,6 +11,7 @@ devstack does not have: **app-version switching** and **Windows Service install*
 > [docs/คู่มือ.html](docs/คู่มือ.html) · [offline/air-gapped](docs/OFFLINE-DEPLOY.md) ·
 > เทียบกับ devstack [docs/เปรียบเทียบ-devstack.md](docs/เปรียบเทียบ-devstack.md) ·
 > credits + ความเห็นต่อโปรเจกต์ [docs/ABOUT-TH.md](docs/ABOUT-TH.md) ·
+> diagrams (SVG+Mermaid) [docs/diagrams.md](docs/diagrams.md) ·
 > deep dives: [review](review.md) (bugs found & fixed) · [audit](audit.md) (security) ·
 > [concept](concept.md) (architecture) · [soul](soul.md) (philosophy) · [ai](ai.md) (for AI agents)
 
@@ -130,7 +131,11 @@ are ignored on purpose (this repo is public).
 | `aptstack seed` | import sample database (`aptstack_demo`) |
 | `aptstack logs <apache\|mysql\|php\|all> [n]` | tail log files, highlight errors |
 | `aptstack tls status\|init\|import\|off` | HTTPS — self-signed **or real cert** |
-| `aptstack report` | printable HTML status report (all checks + probes) |
+| `aptstack report` | printable HTML status report (checks + probes + **folder sizes / bloat warnings**) |
+| `aptstack size` | CLI size table — every folder, per-version breakdown, disk-free warnings |
+| `aptstack run` | dev console: start + block on screen, Ctrl+C stops (**no service needed**) |
+| `aptstack dist <app> [out] [nostack]` | build copy-paste deploy bundle (`VERSIONS.txt` + `DEPLOY.txt`) |
+| `aptstack git init\|status\|clear` | optional git for the bundle on the server |
 | `aptstack clone app <from> <to>` | copy app code (does not switch; **same DB**) |
 | `aptstack clone mysql <from> <to>` | copy a datadir (requires `stop` + confirm) |
 | `aptstack remove app\|php\|apache\|mysql <name> [data]` | delete with warnings + confirmation |

@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 500" font-family="Segoe UI, Leelawadee UI, Tahoma, sans-serif">
+  <rect width="920" height="500" fill="#ffffff"/>
+  <text x="24" y="34" font-size="20" font-weight="700" fill="#10306b">aptstack dist → copy-paste ขึ้น server</text>
+  <text x="24" y="56" font-size="13" fill="#555">สร้างชุดพร้อมใช้ 1 โฟลเดอร์ ไม่ต้องติดตั้งอะไรบน server ให้วุ่นวาย</text>
+
+  <defs>
+    <marker id="a3" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#10306b"/>
+    </marker>
+  </defs>
+
+  <g font-size="13">
+    <!-- step1 -->
+    <rect x="40" y="90" width="250" height="150" rx="8" fill="#eef6ff" stroke="#1b57c4" stroke-width="2"/>
+    <text x="52" y="114" font-weight="700" fill="#1b57c4">1) บน notebook (dev)</text>
+    <text x="52" y="138" fill="#333" font-family="Consolas,monospace">aptstack dist todo-1.1</text>
+    <text x="52" y="162" fill="#333">ผลลัพธ์:</text>
+    <text x="52" y="182" fill="#333">dist_paste\todo-1.1\</text>
+    <text x="52" y="202" fill="#555">· scripts + app code + binary</text>
+    <text x="52" y="220" fill="#555">· VERSIONS.txt + DEPLOY.txt</text>
+    <text x="52" y="238" fill="#555">· ไม่เอา data เดิม / .git / logs</text>
+
+    <line x1="290" y1="165" x2="330" y2="165" stroke="#10306b" stroke-width="2" marker-end="url(#a3)"/>
+
+    <!-- step2 -->
+    <rect x="332" y="90" width="240" height="150" rx="8" fill="#fffbea" stroke="#c9a800" stroke-width="2"/>
+    <text x="344" y="114" font-weight="700" fill="#7a6500">2) ย้ายไฟล์</text>
+    <text x="344" y="138" fill="#333">RDP (drive/share), USB,</text>
+    <text x="344" y="158" fill="#333">หรือ share ใน LAN</text>
+    <text x="344" y="184" fill="#555">ไม่ต้องต่อเน็ตบน server</text>
+    <text x="344" y="206" fill="#555">tip: อย่า copy-paste ตรง ๆ ผ่าน</text>
+    <text x="344" y="224" fill="#555">RDP (ไฟล์เล็กเยอะ = ช้ามาก)</text>
+    <text x="344" y="242" fill="#555">ใช้ drive redirection ดีกว่า</text>
+
+    <line x1="572" y1="165" x2="612" y2="165" stroke="#10306b" stroke-width="2" marker-end="url(#a3)"/>
+
+    <!-- step3 -->
+    <rect x="614" y="90" width="270" height="150" rx="8" fill="#e5f6ec" stroke="#0a7a33" stroke-width="2"/>
+    <text x="626" y="114" font-weight="700" fill="#0a7a33">3) บน server — 4 คำสั่ง</text>
+    <text x="626" y="138" font-family="Consolas,monospace" fill="#333">cd /d E:\todo-1.1</text>
+    <text x="626" y="158" font-family="Consolas,monospace" fill="#333">aptstack use todo-1.1</text>
+    <text x="626" y="178" font-family="Consolas,monospace" fill="#333">aptstack start</text>
+    <text x="626" y="198" font-family="Consolas,monospace" fill="#333">aptstack doctor</text>
+    <text x="626" y="224" fill="#555">เปิด http://127.0.0.1:8077/app/</text>
+  </g>
+
+  <!-- note boxes -->
+  <g font-size="13">
+    <rect x="40" y="270" width="420" height="120" rx="8" fill="#f7f9fc" stroke="#8a8f98"/>
+    <text x="52" y="296" font-weight="700" fill="#10306b">อยากให้บูตเองตอนเปิดเครื่อง?</text>
+    <text x="52" y="320" fill="#333">รัน manual จนมั่นใจก่อน แล้ว:</text>
+    <text x="52" y="344" font-family="Consolas,monospace" fill="#6b21a8">aptstack service install</text>
+    <text x="52" y="364" font-family="Consolas,monospace" fill="#6b21a8">aptstack service start</text>
+    <text x="52" y="382" fill="#555">(ไม่บังคับ — dev ไม่ต้องใช้ service เลย)</text>
+
+    <rect x="490" y="270" width="400" height="120" rx="8" fill="#fffbea" stroke="#c9a800"/>
+    <text x="502" y="296" font-weight="700" fill="#7a6500">เปลี่ยนรุ่นตอนโดน audit สั่ง</text>
+    <text x="502" y="320" fill="#333">copy zip ตัวใหม่เข้า server แล้ว:</text>
+    <text x="502" y="344" font-family="Consolas,monospace" fill="#1b57c4">aptstack add php D:\php-8.4.27-...zip</text>
+    <text x="502" y="364" font-family="Consolas,monospace" fill="#1b57c4">aptstack use php 8.4.27</text>
+    <text x="502" y="384" fill="#555">ตัวเก่ายังอยู่ → use php 8.3.36 ย้อนกลับได้ทันที</text>
+  </g>
+
+  <text x="40" y="430" font-size="13" fill="#333">ดูข้างในชุด deploy: เปิดไฟล์ VERSIONS.txt (รายงาน version ทั้งหมด) และ DEPLOY.txt (ขั้นตอน)</text>
+  <text x="40" y="454" font-size="13" fill="#333">ถ้าอยาก track การแก้ config บน server: aptstack git init (ไม่บังคับ) · เอา history ออกก่อนส่งกลับ: aptstack git clear</text>
+  <text x="40" y="480" font-size="12" fill="#777">aptstack · vector diagram</text>
+</svg>

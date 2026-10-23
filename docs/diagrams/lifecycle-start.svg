@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 520" font-family="Segoe UI, Leelawadee UI, Tahoma, sans-serif">
+  <rect width="920" height="520" fill="#ffffff"/>
+  <text x="24" y="34" font-size="20" font-weight="700" fill="#10306b">aptstack start — ไม่ใช่ "รอแบบเดา"</text>
+  <text x="24" y="56" font-size="13" fill="#555">generate config ใหม่ → รัน process → health probe จริง (HTTP/HTTPS GET + DB ping)</text>
+
+  <defs>
+    <marker id="a1" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#10306b"/>
+    </marker>
+  </defs>
+
+  <!-- flow -->
+  <g font-size="13">
+    <rect x="40" y="90" width="180" height="64" rx="8" fill="#e8f1ff" stroke="#1b57c4" stroke-width="2"/>
+    <text x="52" y="114" font-weight="700" fill="#1b57c4">aptstack start</text>
+    <text x="52" y="134" fill="#234">อ่าน config\stack.json</text>
+
+    <rect x="270" y="90" width="200" height="64" rx="8" fill="#f3e8ff" stroke="#6b21a8"/>
+    <text x="282" y="114" font-weight="700" fill="#6b21a8">generate config ใหม่</text>
+    <text x="282" y="132" fill="#234">php.ini · my.ini · httpd.conf</text>
+    <text x="282" y="150" fill="#234">(path = ที่รันจริง ไม่ hardcode)</text>
+
+    <rect x="520" y="90" width="170" height="64" rx="8" fill="#e5f6ec" stroke="#0a7a33"/>
+    <text x="532" y="114" font-weight="700" fill="#0a7a33">MariaDB</text>
+    <text x="532" y="134" fill="#234">bind 127.0.0.1:3307</text>
+
+    <rect x="730" y="90" width="160" height="64" rx="8" fill="#e5f6ec" stroke="#0a7a33"/>
+    <text x="742" y="114" font-weight="700" fill="#0a7a33">Web</text>
+    <text x="742" y="132" fill="#234">Apache mod_php</text>
+    <text x="742" y="150" fill="#234">(หรือ php -S)</text>
+
+    <line x1="220" y1="122" x2="268" y2="122" stroke="#10306b" stroke-width="2" marker-end="url(#a1)"/>
+    <line x1="470" y1="122" x2="518" y2="122" stroke="#10306b" stroke-width="2" marker-end="url(#a1)"/>
+    <line x1="690" y1="122" x2="728" y2="122" stroke="#10306b" stroke-width="2" marker-end="url(#a1)"/>
+  </g>
+
+  <!-- probes -->
+  <g font-size="13">
+    <rect x="270" y="200" width="620" height="88" rx="8" fill="#fffbea" stroke="#c9a800" stroke-width="2"/>
+    <text x="284" y="224" font-weight="700" fill="#7a6500">health probe (ของจริง ไม่ใช่ sleep + เดา)</text>
+    <text x="284" y="248" fill="#333">HTTP  GET http://127.0.0.1:8077/        →  200 OK (1655 ms)</text>
+    <text x="284" y="268" fill="#333">HTTPS GET https://127.0.0.1:8443/     →  200 OK (639 ms)   (ถ้า httpsEnabled)</text>
+    <text x="284" y="288" fill="#333">DB    mariadb-admin ping               →  OK (2866 ms)</text>
+    <line x1="610" y1="154" x2="610" y2="198" stroke="#10306b" stroke-width="2" marker-end="url(#a1)"/>
+  </g>
+
+  <!-- outcomes -->
+  <g font-size="13">
+    <rect x="40" y="330" width="420" height="140" rx="8" fill="#e5f6ec" stroke="#0a7a33" stroke-width="2"/>
+    <text x="52" y="356" font-weight="700" fill="#0a7a33">ผ่าน → ใช้งานได้</text>
+    <text x="52" y="380" fill="#234">health: https -&gt; 200 OK (639 ms)</text>
+    <text x="52" y="404" fill="#234">เปิด http://127.0.0.1:8077/app/</text>
+    <text x="52" y="428" fill="#234">ตรวจซ้ำ: aptstack doctor / aptstack report</text>
+    <text x="52" y="452" fill="#234">dev console (ไม่ต้อง service): aptstack run</text>
+
+    <rect x="490" y="330" width="400" height="140" rx="8" fill="#fdeaea" stroke="#b00020" stroke-width="2"/>
+    <text x="502" y="356" font-weight="700" fill="#b00020">ไม่ผ่าน → อย่าเดา ดู log</text>
+    <text x="502" y="380" fill="#234">aptstack logs apache | mysql | php</text>
+    <text x="502" y="404" fill="#234">httpd -t ตรวจ syntax (doctor ทำให้เอง)</text>
+    <text x="502" y="428" fill="#234">พอร์ตชน / extension ไม่โหลด / path ผิด</text>
+    <text x="502" y="452" fill="#234">doctor จะบอกจุดที่ต้องแก้เป็น [ERR]</text>
+  </g>
+  <text x="40" y="500" font-size="12" fill="#777">aptstack · vector diagram</text>
+</svg>

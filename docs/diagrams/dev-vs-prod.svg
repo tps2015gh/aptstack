@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 540" font-family="Segoe UI, Leelawadee UI, Tahoma, sans-serif">
+  <rect width="920" height="540" fill="#ffffff"/>
+  <text x="24" y="34" font-size="20" font-weight="700" fill="#10306b">dev (notebook) vs production (server) — aptstack ชุดเดียวกัน</text>
+  <text x="24" y="56" font-size="13" fill="#555">web engine ไม่มี nginx — ใช้ Apache+mod_php หรือ PHP built-in เท่านั้น · service ไม่บังคับ</text>
+
+  <!-- DEV -->
+  <rect x="30" y="80" width="420" height="330" rx="10" fill="#eef6ff" stroke="#1b57c4" stroke-width="2"/>
+  <text x="48" y="108" font-size="15" font-weight="700" fill="#1b57c4">DEV — Windows 11 notebook (มีเน็ต)</text>
+  <g font-size="13" fill="#222">
+    <rect x="48" y="126" width="384" height="56" rx="6" fill="#ffffff" stroke="#8a8f98"/>
+    <text x="60" y="148" font-weight="700">aptstack start  /  aptstack run</text>
+    <text x="60" y="168" fill="#555">รันแบบ manual — ไม่ต้อง register service เลย</text>
+
+    <text x="60" y="208" fill="#333">· โหลด PHP/Apache/MySQL จากเน็ตได้ (add php 8.3.36)</text>
+    <text x="60" y="232" fill="#333">· สลับรุ่นทดสอบ: use php / use apache / use mysql</text>
+    <text x="60" y="256" fill="#333">· กัน audit สั่งเปลี่ยน: เก็บรุ่นเก่าไว้ข้าง ๆ แล้ว use - ได้เสมอ</text>
+    <text x="60" y="280" fill="#333">· doctor + report = หลักฐานส่ง auditor</text>
+    <text x="60" y="304" fill="#333">· RAM กลาง ๆ ก็พอ: รัน web+db ทีละชุด ไม่เปิดหลาย stack</text>
+
+    <rect x="48" y="324" width="384" height="64" rx="6" fill="#ffffff" stroke="#8a8f98"/>
+    <text x="60" y="346" font-weight="700">แพ็กเพื่อเอาขึ้น server</text>
+    <text x="60" y="366" fill="#555">aptstack dist &lt;app&gt;  →  dist_paste\&lt;app&gt;\ (มี VERSIONS.txt + DEPLOY.txt)</text>
+    <text x="60" y="384" fill="#555">ไม่มีเน็ตบน server? ใช้ zip อย่างเดียวกันนั้นแหละ</text>
+  </g>
+
+  <!-- SERVER -->
+  <rect x="470" y="80" width="420" height="330" rx="10" fill="#f3e8ff" stroke="#6b21a8" stroke-width="2"/>
+  <text x="488" y="108" font-size="15" font-weight="700" fill="#6b21a8">PROD — Windows Server (มักไม่มีเน็ต)</text>
+  <g font-size="13" fill="#222">
+    <rect x="488" y="126" width="384" height="56" rx="6" fill="#ffffff" stroke="#8a8f98"/>
+    <text x="500" y="148" font-weight="700">RDP/share copy dist_paste เข้าไป (ไม่โหลดจากเน็ต)</text>
+    <text x="500" y="168" fill="#555">cd /d E:\path\todo-1.1</text>
+
+    <text x="500" y="208" fill="#333">1) ลองรันแบบ manual ก่อน (ไม่ต้อง register):</text>
+    <text x="500" y="228" font-family="Consolas,monospace" fill="#1b57c4">   aptstack use todo-1.1 &amp;&amp; aptstack start &amp;&amp; aptstack doctor</text>
+    <text x="500" y="252" fill="#333">2) มั่นใจแล้วค่อยให้บูตเอง:</text>
+    <text x="500" y="272" font-family="Consolas,monospace" fill="#6b21a8">   aptstack service install &amp;&amp; aptstack service start</text>
+    <text x="500" y="298" fill="#333">· ติดตั้ง service ตอนพอร์ตถูกจอง → ระบบเตือนให้ stop ก่อน</text>
+    <text x="500" y="322" fill="#333">· ถอน: aptstack service uninstall (ไม่เหลืออะไรค้าง)</text>
+    <text x="500" y="348" fill="#333">· เปลี่ยนรุ่นตอนโดน audit: copy zip ใหม่ → add php 8.4.27 → use php</text>
+    <text x="500" y="372" fill="#333">· ของเก่ายังอยู่ → ย้อนกลับได้ถ้าแอปพัง</text>
+  </g>
+
+  <!-- bottom -->
+  <rect x="30" y="430" width="860" height="80" rx="8" fill="#fffbea" stroke="#c9a800"/>
+  <text x="46" y="456" font-size="13" font-weight="700" fill="#7a6500">สรุป</text>
+  <text x="46" y="478" font-size="13" fill="#333">ชุดไฟล์/คำสั่งเดียวกันทั้งสองฝั่ง — ต่างแค่ "มีเน็ตไหม" กับ "ให้ service ดูแลตอนบูตไหม" · ไม่ต้องใช้ nginx</text>
+  <text x="46" y="498" font-size="13" fill="#333">offline/intranet → docs/OFFLINE-DEPLOY.md · walkthrough → docs/SCENARIO.md · เอกสาร: README-TH.md</text>
+  <text x="30" y="528" font-size="12" fill="#777">aptstack · vector diagram</text>
+</svg>

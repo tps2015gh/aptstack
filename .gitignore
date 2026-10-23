@@ -67,3 +67,4 @@ Desktop.ini
 *.pfx
 *.p12
 /aptstack-report.html
+/dist_paste/

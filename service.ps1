@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
 .SYNOPSIS
     aptstack service manager - ติดตั้ง/ถอน Windows Service
@@ -103,6 +103,30 @@ switch ($Action) {
         $exe = Build-Service
         Write-Head 'ติดตั้ง Windows Service'
         if (Get-ServiceObj) { Write-Warn2 'มี service อยู่แล้ว — ถอนก่อนด้วย: aptstack service uninstall' }
+
+        # กันชน: ถ้า web/db port ถูก stack แบบ manual จองอยู่ (dev ยังไม่ได้ stop)
+        # service จะ start ตอนบูตแล้วชนพอร์ต -> เตือนให้ aptstack stop ก่อน
+        $httpP = 8077; $dbP = 3307
+        $cfgPath = Join-Path $Root 'config\stack.json'
+        if (Test-Path $cfgPath) {
+            try {
+                $cj = Get-Content $cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($cj.httpPort) { $httpP = [int]$cj.httpPort }
+                if ($cj.dbPort)   { $dbP   = [int]$cj.dbPort }
+            } catch { }
+        }
+        $busy = @()
+        foreach ($pp in @($httpP, $dbP)) {
+            if (Get-NetTCPConnection -LocalPort $pp -State Listen -ErrorAction SilentlyContinue) { $busy += $pp }
+        }
+        if ($busy.Count -gt 0) {
+            Write-Warn2 ("พอร์ต " + ($busy -join ', ') + " ถูกใช้อยู่ — ดูเหมือน stack แบบ manual ยังรันอยู่")
+            Write-Info 'ถ้าติดตั้งเลย ตอนบูต service จะชนกับการรัน manual เดิม'
+            Write-Info 'แนะนำ: aptstack stop ก่อน แล้วค่อย service install (dev ใช้ start/run ได้ตลอดโดยไม่ต้อง register)'
+            Write-Host "  ยืนยันติดตั้งต่อโดยไม่ต้อง stop ตอนนี้? (พิมพ์ 'y')" -ForegroundColor Yellow
+            $ans = Read-Host '  > '
+            if ("$ans".Trim().ToLower() -ne 'y') { Write-Info 'ยกเลิก — ไปรัน aptstack stop แล้ว service install ใหม่'; break }
+        }
 
         $binPath = "`"$exe`""
         Invoke-Sc @('create', $SvcName, 'binPath=', $binPath, 'start=', 'auto',
