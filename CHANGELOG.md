@@ -46,6 +46,13 @@
 
 ### Fixed
 
+- **`Start-Db`: MariaDB datadir init พัง** — เคยเรียก `mysqld --initialize-insecure` ซึ่งเป็น
+  ของ MySQL เท่านั้น → MariaDB ตอบ `unknown option` exit 2 (เจอตอน `migrate` ไป engine ใหม่)
+  · ตอนนี้ใช้ `mysql_install_db.exe -d<datadir> -p<password>` ถ้ามี (MariaDB) และ fallback
+  `--initialize-insecure` เฉพาะ MySQL · datadir ที่ init ค้างจะถูกล้างก่อน
+  · **ทดสอบ end-to-end แล้ว**: `migrate mysql 11.4.13 → 10.11.19` dump/restore ครบ
+    (`aptstack_demo`: greetings 3 · todo_items 18) แล้ว `use mysql 11.4.13` rollback ได้
+
 - 🔴 **`.cmd`/`.bat` เป็น LF** → cmd พิมพ์ `'-' is not recognized` ทุกครั้ง → แปลงเป็น CRLF
 - `report`: nested function ใช้ `$script:` ผิด scope → `op_Addition` error
 - `Confirm-Action`: อ่านคำตอบจาก stdin เมื่อ piped (`echo y | ...`) ได้แล้ว
@@ -90,6 +97,13 @@
 
 ### Fixed
 
+- **`Start-Db`: MariaDB datadir init พัง** — เคยเรียก `mysqld --initialize-insecure` ซึ่งเป็น
+  ของ MySQL เท่านั้น → MariaDB ตอบ `unknown option` exit 2 (เจอตอน `migrate` ไป engine ใหม่)
+  · ตอนนี้ใช้ `mysql_install_db.exe -d<datadir> -p<password>` ถ้ามี (MariaDB) และ fallback
+  `--initialize-insecure` เฉพาะ MySQL · datadir ที่ init ค้างจะถูกล้างก่อน
+  · **ทดสอบ end-to-end แล้ว**: `migrate mysql 11.4.13 → 10.11.19` dump/restore ครบ
+    (`aptstack_demo`: greetings 3 · todo_items 18) แล้ว `use mysql 11.4.13` rollback ได้
+
 - `sysinfo-app`: CPU/RAM ไม่แสดงบนเครื่องที่ไม่มี `wmic` → เปลี่ยนเป็น PowerShell CIM
 - seed รายงานเลขแถวสุดท้ายผิด label (มี 2 SELECT ในไฟล์เดียว)
 
@@ -122,6 +136,13 @@
 - `examples/vhosts.sample.json`
 
 ### Fixed
+
+- **`Start-Db`: MariaDB datadir init พัง** — เคยเรียก `mysqld --initialize-insecure` ซึ่งเป็น
+  ของ MySQL เท่านั้น → MariaDB ตอบ `unknown option` exit 2 (เจอตอน `migrate` ไป engine ใหม่)
+  · ตอนนี้ใช้ `mysql_install_db.exe -d<datadir> -p<password>` ถ้ามี (MariaDB) และ fallback
+  `--initialize-insecure` เฉพาะ MySQL · datadir ที่ init ค้างจะถูกล้างก่อน
+  · **ทดสอบ end-to-end แล้ว**: `migrate mysql 11.4.13 → 10.11.19` dump/restore ครบ
+    (`aptstack_demo`: greetings 3 · todo_items 18) แล้ว `use mysql 11.4.13` rollback ได้
 
 - 🔴 **extension โหลดไม่ได้ใต้ Apache** (`curl`/`intl`/`sodium`/`sqlite3` …)
   เพราะ Windows หา dependency DLL จาก PATH ของ process ที่โหลด → prepend PATH ของ PHP

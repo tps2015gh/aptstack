@@ -144,7 +144,7 @@ Invoke-WebRequest http://127.0.0.1:8077/app/ -UseBasicParsing
 **pending (งานถัดไป):**
 1. ~~เพิ่มภาพ console ลง README-TH/README + หัวข้อ web console ใน คู่มือ.md/.html~~ ✅ 2026-10-23
 2. commit + push (token อาจต้องขอใหม่ถ้า revoke ไปแล้ว)
-3. (ค้างเดิม) ทดสอบ migrate end-to-end ด้วย engine ที่สอง · verify checksum อัตโนมัติ
+3. ~~ทดสอบ migrate end-to-end ด้วย engine ที่สอง~~ ✅ 2026-10-23 (11.4.13→10.11.19 ผ่าน · แก้บั๊ค mysql_install_db) · verify checksum อัตโนมัติ (ยังไม่ทำ)
 4. rebuild release เป็น v1.3.0 (รวม console/report/size/dist/git/clone/remove/migrate ทั้งหมด)
 
 **สภาพแวดล้อม:**

@@ -733,9 +733,39 @@ function Start-Db($cfg) {
     if (-not (Test-Path (Join-Path $datadir 'mysql'))) {
         Write-Head 'สร้าง data directory ครั้งแรก'
         Write-Info $datadir
-        $args = @('--initialize-insecure', "--datadir=$datadir", "--basedir=$($hit.Dir)")
-        $p = Start-Process -FilePath $hit.Daemon -ArgumentList $args -Wait -PassThru -NoNewWindow
-        if ($p.ExitCode -ne 0) { Write-Err2 "mysqld --initialize ล้มเหลว (exit $($p.ExitCode))"; return $false }
+        # datadir ที่ init ค้าง (มีไฟล์ ibdata แต่ไม่มี mysql/) ต้องล้างก่อน ไม่งั้น install/initialize พัง
+        $left = @(Get-ChildItem $datadir -Force -ErrorAction SilentlyContinue)
+        if ($left.Count -gt 0) {
+            Write-Warn2 'มีไฟล์ค้างจากการ init ล้มเหลว — ล้างก่อน'
+            Remove-Item (Join-Path $datadir '*') -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        # MariaDB ไม่รองรับ --initialize-insecure (เป็นของ MySQL) -> ใช้ mysql_install_db -d<path>
+        $installDb = $null
+        foreach ($n in @('bin\mariadb-install-db.exe', 'bin\mysql_install_db.exe')) {
+            $p0 = Join-Path $hit.Dir $n
+            if (Test-Path $p0) { $installDb = $p0; break }
+        }
+        $oldEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            if ($installDb) {
+                $ida = @("-d$datadir")
+                if ($cfg.dbPass) { $ida += "-p$($cfg.dbPass)" }   # MariaDB ต้องติดกัน: -proot ไม่ใช่ -p root
+                $p = Start-Process -FilePath $installDb -ArgumentList $ida -Wait -PassThru -NoNewWindow `
+                    -RedirectStandardOutput (Join-Path $Script:P.Tmp 'install-db-out.txt') `
+                    -RedirectStandardError  (Join-Path $Script:P.Tmp 'install-db-err.txt')
+                if ($p.ExitCode -ne 0 -or -not (Test-Path (Join-Path $datadir 'mysql'))) {
+                    $e = Get-Content (Join-Path $Script:P.Tmp 'install-db-err.txt') -Tail 5 -ErrorAction SilentlyContinue
+                    Write-Err2 "mysql_install_db ล้มเหลว (exit $($p.ExitCode))"
+                    if ($e) { Write-Info ($e -join ' ') }
+                    return $false
+                }
+            } else {
+                $args = @('--initialize-insecure', "--datadir=$datadir", "--basedir=$($hit.Dir)")
+                $p = Start-Process -FilePath $hit.Daemon -ArgumentList $args -Wait -PassThru -NoNewWindow
+                if ($p.ExitCode -ne 0) { Write-Err2 "mysqld --initialize ล้มเหลว (exit $($p.ExitCode))"; return $false }
+            }
+        } finally { $ErrorActionPreference = $oldEap }
         Write-Ok 'สร้าง datadir เรียบร้อย'
     }
 
