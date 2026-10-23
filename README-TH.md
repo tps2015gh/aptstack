@@ -330,6 +330,25 @@ aptstack logs all
 
 ---
 
+## Web console (localhost เท่านั้น)
+
+เปิดเบราว์เซอร์บนเครื่องที่รัน → **http://127.0.0.1:8077/aptstack-console/**
+
+![aptstack web console](docs/screenshots/console.png)
+
+สั่ง start/stop/restart · ดู status/doctor/list/size · สลับ app/PHP · seed/samples/report/logs
+ได้จากหน้าเว็บ **ไม่ต้องเปิด terminal**
+
+| ปลอดภัยอย่างไร | |
+|---|---|
+| จำกัด IP | REMOTE_ADDR ต้องเป็น 127.0.0.1/::1 (จากนอกเครื่อง = 403) |
+| CSRF | ทุก POST ต้องมี session token |
+| whitelist | สั่งได้เฉพาะคำสั่งที่อนุญาต · ชื่อ app/PHP ต้องอยู่ใน `versions\` / `stack\php\` จริง |
+| คำสั่งอันตราย | remove / clone / migrate / service / tls import → **ใช้ CLI เท่านั้น** |
+
+- หลาย app เปิดพร้อมกันได้: /app/ /todo-app/ /sysinfo-app/ (junction ต่อ path บน listener เดียว)
+- detail: [docs/คู่มือ.md](docs/คู่มือ.md) ข้อ 7c
+
 ## แก้ปัญหาบ่อย
 
 | อาการ | ทำอะไร |

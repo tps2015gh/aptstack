@@ -142,10 +142,10 @@ Invoke-WebRequest http://127.0.0.1:8077/app/ -UseBasicParsing
 - security: PHP 8.3.36 (patched) · doctor ผ่านทุกข้อ · ไม่มีชื่อ/ข้อมูลระบบจริงใน repo (history ก็ล้างแล้ว)
 
 **pending (งานถัดไป):**
-1. เพิ่มภาพ console ลง README-TH/README + หัวข้อ web console ใน คู่มือ.md/.html
+1. ~~เพิ่มภาพ console ลง README-TH/README + หัวข้อ web console ใน คู่มือ.md/.html~~ ✅ 2026-10-23
 2. commit + push (token อาจต้องขอใหม่ถ้า revoke ไปแล้ว)
 3. (ค้างเดิม) ทดสอบ migrate end-to-end ด้วย engine ที่สอง · verify checksum อัตโนมัติ
-4. release asset v1.2.0 ยังไม่รวมของใหม่รอบนี้ — ถ้าอยากให้ตรง ให้ rebuild zip + แทน asset
+4. rebuild release เป็น v1.3.0 (รวม console/report/size/dist/git/clone/remove/migrate ทั้งหมด)
 
 **สภาพแวดล้อม:**
 - repo: github.com/tps2015gh/aptstack (public) · main

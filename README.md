@@ -184,6 +184,27 @@ Sample: [examples/vhosts.sample.json](examples/vhosts.sample.json).
 After every `start` aptstack runs **real health probes** (HTTP/HTTPS GET + database ping)
 instead of blind sleeps, e.g. `health: https -> 200 OK (660 ms)`.
 
+## Web console (localhost only)
+
+Open a browser on the machine that runs the stack →
+<http://127.0.0.1:8077/aptstack-console/>
+
+![aptstack web console](docs/screenshots/console.png)
+
+Start/stop/restart · status/doctor/list/size · switch app/PHP · seed/samples/report/logs —
+without opening a terminal.
+
+| Guard | How |
+|---|---|
+| IP gate | REMOTE_ADDR must be 127.0.0.1/::1 (anything else → 403) |
+| CSRF | every POST requires a session token |
+| whitelist | only allowed commands; app/PHP names must exist under `versions\` / `stack\php\` |
+| dangerous cmds | remove / clone / migrate / service / tls import → **CLI only** |
+
+Several apps are reachable at once as path aliases: /app/ /todo-app/ /sysinfo-app/
+(junctions on one listener — not multiple processes).
+Details: [docs/คู่มือ.md](docs/คู่มือ.md) §7c.
+
 ## Security
 
 See [SECURITY.md](SECURITY.md). Short version:

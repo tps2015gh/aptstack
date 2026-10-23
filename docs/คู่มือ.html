@@ -70,7 +70,7 @@ HTTPS/vhost → Service → backup</p>
   <b>เนื้อหา:</b>
   <a href="#s0">คืออะไร</a><a href="#s1">เริ่มใช้</a><a href="SCENARIO.md">Scenario ยาว</a><a href="#s2">คำสั่ง</a>
   <a href="#s3">สลับเวอร์ชัน</a><a href="#s4">สลับ PHP</a><a href="#s4b">สลับ Apache/MySQL</a><a href="#s5">XAMPP</a><a href="#s5a">HTTPS</a><a href="#s5b">vhosts</a><a href="#s5c">clone/remove</a>
-  <a href="#s6">Service</a><a href="#s6b">dev/prod</a><a href="diagrams.md">ไดอะแกรม</a><a href="#s7">ย้าย server</a><a href="#s8">แก้ปัญหา</a>
+  <a href="#s6">Service</a><a href="#s6b">dev/prod</a><a href="#s6c">console</a><a href="diagrams.md">ไดอะแกรม</a><a href="#s7">ย้าย server</a><a href="#s8">แก้ปัญหา</a>
   <a href="#s9">ความปลอดภัย</a><a href="#s10">โครงสร้าง</a>
 </div>
 
@@ -401,6 +401,39 @@ aptstack service start</code></pre>
 <p>เคสจริง notebook → server ไม่มีเน็ต: <code>aptstack dist</code> → copy → use/start/doctor
 · ภาพรวม: <a href="diagrams.md">diagrams.md</a> · ละเอียด: <a href="SCENARIO.md">SCENARIO.md</a></p>
 
+
+<h2 id="s6c">7c. Web console (localhost เท่านั้น)</h2>
+<p>เปิดเบราว์เซอร์ <b>บนเครื่องที่รัน aptstack</b> →
+<b>http://127.0.0.1:8077/aptstack-console/</b> (port ตาม <code>httpPort</code>)</p>
+<p><img src="screenshots/console.png" alt="aptstack web console" style="max-width:100%;border:1px solid var(--line);border-radius:8px;margin:12px 0"></p>
+
+<h3>สั่งได้อะไร</h3>
+<table>
+<tr><th>ปุ่ม / หัวข้อ</th><th>คำสั่ง CLI ที่เทียบเท่า</th></tr>
+<tr><td>Start / Stop / Restart</td><td><code>aptstack start|stop|restart</code></td></tr>
+<tr><td>Status / Doctor / List / Size</td><td><code>aptstack status|doctor|list|size</code></td></tr>
+<tr><td>Samples / Seed / Report</td><td><code>aptstack samples|seed|report</code></td></tr>
+<tr><td>Logs</td><td><code>aptstack logs &lt;apache|mysql|php|all&gt;</code></td></tr>
+<tr><td>Switch app</td><td>เลือกรายการใน <code>versions\</code> → <code>aptstack use &lt;name&gt;</code></td></tr>
+<tr><td>Switch PHP</td><td>เลือกรายการใน <code>stack\php\</code> → <code>aptstack use php &lt;ver&gt;</code></td></tr>
+</table>
+
+<h3>กันภายนอก 3 ชั้น</h3>
+<ol>
+<li><b>IP gate</b> — <code>REMOTE_ADDR</code> ต้องเป็น <code>127.0.0.1</code> / <code>::1</code>
+  (LAN / tunnel / reverse-proxy = <b>403</b>)</li>
+<li><b>CSRF</b> — ทุก POST ต้องมี session token</li>
+<li><b>whitelist</b> — เฉพาะคำสั่งที่อนุญาต · ชื่อ app/PHP ต้องอยู่จริงใน
+  <code>versions\</code> / <code>stack\php\</code> · argument ผ่าน <code>escapeshellarg</code></li>
+</ol>
+
+<div class="box warn"><b>คำสั่งอันตรายไม่เปิดบน web:</b>
+<code>remove</code> / <code>clone</code> / <code>migrate</code> / <code>service install</code> / <code>tls import</code>
+→ ใช้ CLI เท่านั้น (หน้าเว็บแสดงคำสั่งให้ copy)</div>
+
+<p><b>หลาย app พร้อมกัน:</b> junctions <code>www\&lt;ชื่อapp&gt;</code> →
+เข้า <code>/app/</code> <code>/todo-app/</code> <code>/sysinfo-app/</code> บน
+<b>listener เดียว</b> (ไม่ใช่หลาย process)</p>
 <h2 id="s7">7. ย้ายไปเครื่อง server</h2>
 <pre><code><span style="color:#6b7280">:: บนเครื่อง dev</span>
 aptstack stop

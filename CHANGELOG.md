@@ -28,6 +28,11 @@
   ปฏิเสธตัวที่ active · กัน path traversal · datadir ต้องพิมพ์ `DELETE` (2 ชั้น)
 - **`aptstack migrate mysql <ใหม่>`** — โยกข้อมูลไป engine ใหม่ (dump → switch → restore)
 - **`-h` / `-?` / `--help`** → โชว์ help
+- **Web console** `www/aptstack-console/` (localhost only) — start/stop/status/doctor/list/size/
+  samples/seed/report/logs + switch app/PHP จากเบราว์เซอร์ · IP gate + CSRF + command whitelist
+  · dangerous cmds (remove/clone/migrate/service/tls import) ใช้ CLI เท่านั้น
+  · per-app URL aliases `/app/` `/todo-app/` `/sysinfo-app/` บน listener เดียว
+  · screenshot: `docs/screenshots/console.png` · เอกสาร: คู่มือ.md §7c, README-TH, README
 - เอกสารแกนกลาง: **`ai.md`** · **`concept.md`** · **`soul.md`** · **`review.md`** · **`audit.md`**
 
 ### Fixed
