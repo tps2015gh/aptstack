@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.2 — 2026-10-23
+
+### Added
+
+- **`aptstack shorttag [on|off]`** — เปิด/ปิด `short_open_tag` ให้แอป CodeIgniter 3 / โค้ด `<?` เก่า
+  · **default = On** ใน `templates\php-hardening.ini` · regenerate `config\php.ini` ให้เอง
+  · `start` / `doctor` โชว์สถานะ short_open_tag ตั้งแต่แรก กันลืม (แอป CI3 พังแบบ Unclosed brace)
+
 ## 1.3.1 — 2026-10-23
 
 ### Added

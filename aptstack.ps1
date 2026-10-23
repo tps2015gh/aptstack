@@ -511,6 +511,9 @@ function New-PhpIni($phpDir) {
     foreach ($l in ($content -split "`r?`n")) {
         if ($l -match '^\s*;') { $kept += $l }
         elseif ($l -match '^\s*(extension|zend_extension)\s*=') { }
+        # ตัด short_open_tag ออกจาก base — ค่าจริงมาจาก templates\php-hardening.ini
+        # (php.ini-production มี short_open_tag = Off ถ้าไม่ตัด จะทับค่า On ของเรา)
+        elseif ($l -match '^\s*short_open_tag\s*=') { }
         else { $kept += $l }
     }
     $content = ($kept -join "`r`n")
@@ -1074,6 +1077,7 @@ function Cmd-Start {
     Start-Db $cfg | Out-Null
     Sync-AppAliases            # ทุก app มี path ของตัวเอง เช่น /todo-app/ /sysinfo-app/
     Start-Web $cfg | Out-Null
+    Write-ShortTagHint         # เตือน short_open_tag ตั้งแต่ start — กัน CI3 พังแบบ Unclosed brace
     Cmd-Summary
 }
 
@@ -1974,6 +1978,17 @@ function Cmd-Doctor {
         else { Write-Ok "พอร์ต $($pair[1]) ว่าง (ยังไม่ start)" }
     }
 
+    # 6b) short_open_tag — แอป CI3 / โค้ด <? เก่าต้อง On
+    $stTpl = Get-ShortTagTplValue
+    $stRun = Get-ShortTagRuntimeValue
+    $stEff = if ($stRun) { $stRun } else { $stTpl }
+    if ("$stEff".ToLower() -in @('on', '1', 'true')) {
+        Write-Ok 'short_open_tag = On (CodeIgniter 3 / โค้ด <? เก่าใช้ได้)'
+    } else {
+        Write-Warn2 'short_open_tag = Off — แอป CI3 / helper ที่ใช้ <? จะพัง (ParseError Unclosed brace)'
+        Write-Info 'เปิด: aptstack shorttag on  แล้ว aptstack restart'
+    }
+
     # 7) ข้อมูลจริงไม่ควรอยู่ในโฟลเดอร์ที่จะ commit
     $dumpCount = @(Get-ChildItem $Script:P.Dumps -Filter '*.sql' -EA SilentlyContinue).Count
     if ($dumpCount -gt 0) { Write-Warn2 "data\dumps\ มี $dumpCount ไฟล์ .sql (ข้อมูลจริง) — .gitignore กันไว้แล้ว ห้าม commit" }
@@ -2079,6 +2094,120 @@ function Add-CertTrust([string]$Path) {
 function Restart-WebOnly {
     if (Test-Running 'web') { Stop-Web; Start-Sleep -Seconds 1; Start-Web (Get-Config) | Out-Null }
     else { Write-Info 'web ยังไม่รัน — ค่อยเปิดด้วย: aptstack start' }
+}
+
+function Get-ShortTagTplValue {
+    # อ่านค่า short_open_tag จาก templates\php-hardening.ini (ไม่ใช่ runtime php.ini ที่ regenerate)
+    $tpl = Join-Path $Script:P.Templates 'php-hardening.ini'
+    if (-not (Test-Path $tpl)) { return $null }
+    foreach ($l in (Get-Content $tpl -Encoding UTF8)) {
+        if ("$l" -match '^\s*short_open_tag\s*=\s*(On|Off|1|0|true|false)\s*$' -and "$l" -notmatch '^\s*;') {
+            return $Matches[1]
+        }
+    }
+    return $null
+}
+
+function Get-ShortTagRuntimeValue {
+    # อ่านจาก config\php.ini ที่ generate แล้ว (ถ้ามี)
+    # ใช้ค่า "บรรทัดสุดท้าย" — ใน php.ini directive หลังสุดชนะ
+    $ini = $Script:P.PhpIni
+    if (-not (Test-Path $ini)) { return $null }
+    $last = $null
+    foreach ($l in (Get-Content $ini -Encoding UTF8)) {
+        if ("$l" -match '^\s*short_open_tag\s*=\s*(On|Off|1|0|true|false)\s*$' -and "$l" -notmatch '^\s*;') {
+            $last = $Matches[1]
+        }
+    }
+    return $last
+}
+
+function Set-ShortTagTpl([string]$Value) {
+    # Value = On | Off — แก้ templates\php-hardening.ini แล้ว regenerate php.ini ให้ (ถ้า resolve PHP ได้)
+    $want = if ("$Value".ToLower() -in @('on', '1', 'true', 'yes')) { 'On' } else { 'Off' }
+    $tpl = Join-Path $Script:P.Templates 'php-hardening.ini'
+    if (-not (Test-Path $tpl)) { throw "ไม่พบ $tpl" }
+    $lines = @(Get-Content $tpl -Encoding UTF8)
+    $found = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ("$($lines[$i])" -match '^\s*short_open_tag\s*=') {
+            $lines[$i] = "short_open_tag = $want"
+            $found = $true
+        }
+    }
+    if (-not $found) {
+        $lines += ''
+        $lines += '; ---- short_open_tag ----'
+        $lines += '; CodeIgniter 3 / โค้ด PHP เก่าใช้ <? — ถ้า Off แล้วแอปพังแบบ Unclosed brace'
+        $lines += '; สลับด้วย: aptstack shorttag on|off  แล้ว aptstack restart'
+        $lines += "short_open_tag = $want"
+    }
+    Write-Utf8NoBom $tpl (($lines -join "`r`n") + "`r`n")
+    return $want
+}
+
+function Write-ShortTagHint([switch]$Quiet) {
+    # เตือนตั้งแต่ start/doctor — กันลืมตอนใช้แอป CI3 / PHP เก่า
+    $tplV = Get-ShortTagTplValue
+    $runV = Get-ShortTagRuntimeValue
+    $eff = if ($runV) { $runV } else { $tplV }
+    if (-not $eff) { $eff = 'Off' }
+    $isOn = "$eff".ToLower() -in @('on', '1', 'true')
+    if ($Quiet) {
+        if (-not $isOn) {
+            Write-Warn2 'short_open_tag = Off — แอป CodeIgniter 3 / โค้ด <? เก่าจะพัง (Unclosed brace)'
+            Write-Info 'เปิด: aptstack shorttag on  แล้ว aptstack restart'
+        }
+        return
+    }
+    if ($isOn) {
+        Write-Info "short_open_tag = On (CI3 / โค้ด <? เก่าใช้ได้) · สลับ: aptstack shorttag off"
+    } else {
+        Write-Warn2 'short_open_tag = Off — ถ้าแอป CI3 / helper ใช้ <? จะขึ้น ParseError Unclosed brace'
+        Write-Info 'เปิดง่าย: aptstack shorttag on   แล้ว aptstack restart'
+    }
+}
+
+function Cmd-ShortTag([string]$action) {
+    $tpl = Join-Path $Script:P.Templates 'php-hardening.ini'
+    $act = if ($action) { "$action".ToLower() } else { 'status' }
+
+    switch ($act) {
+        'status' {
+            Write-Head 'short_open_tag (โค้ดเก่าใช้ <?)'
+            $tplV = Get-ShortTagTplValue
+            $runV = Get-ShortTagRuntimeValue
+            Write-Host "  template (templates\php-hardening.ini) : $(if ($tplV) { $tplV } else { '(ไม่มีบรรทัด — ถือว่า Off)' })" -ForegroundColor $(if ("$tplV".ToLower() -in @('on','1','true')) { 'Green' } else { 'Yellow' })
+            Write-Host "  runtime  (config\php.ini ที่ใช้อยู่)    : $(if ($runV) { $runV } else { '(ยังไม่ generate — aptstack start)' })" -ForegroundColor Gray
+            Write-Host ''
+            Write-Info 'เปิด : aptstack shorttag on'
+            Write-Info 'ปิด  : aptstack shorttag off'
+            Write-Info 'แล้ว : aptstack restart   (php.ini ถูก generate ใหม่ทุก start)'
+            Write-Info 'CI3 / helper ที่มี <? ต้องเปิด On ไม่งั้น ParseError Unclosed brace'
+        }
+        { $_ -in @('on', 'off', '1', '0', 'true', 'false', 'yes', 'no') } {
+            $want = Set-ShortTagTpl $act
+            Write-Head "ตั้ง short_open_tag = $want"
+            Write-Ok "บันทึกแล้ว: templates\php-hardening.ini"
+            # regenerate runtime php.ini ถ้า resolve PHP ได้ (ไม่ต้อง start ใหม่ก็เห็นไฟล์ แต่ Apache ต้อง reload)
+            $cfg = Get-Config
+            $php = Resolve-Php $cfg.php
+            if ($php -and $php.Usable) {
+                try {
+                    $ini = New-PhpIni $php.Dir
+                    Write-Info "generate แล้ว: $ini"
+                } catch { Write-Warn2 "generate php.ini ไม่สำเร็จ: $($_.Exception.Message)" }
+            }
+            if (Test-Running 'web') {
+                Write-Warn2 'web กำลังรัน — ต้อง restart เพื่อให้ PHP โหลดค่าใหม่'
+                Write-Info 'รัน: aptstack restart'
+            } else {
+                Write-Info 'เปิด stack: aptstack start'
+            }
+            Write-ShortTagHint
+        }
+        default { throw "ใช้: aptstack shorttag [status|on|off]" }
+    }
 }
 
 function Cmd-Tls($action, $a, $b) {
@@ -3364,6 +3493,7 @@ function Cmd-Help {
   aptstack start | stop | restart
   aptstack stop <port>           หยุด program ที่จองพอร์ตนั้น (โชว์ exe path ก่อน · ถามถ้าไม่ใช่ของเรา)
   aptstack ports                 ดูพอร์ตของ stack + เจ้าของ (PID/exe/folder) — รู้ทันทีของ bundle ไหน
+  aptstack shorttag [on|off]     short_open_tag สำหรับแอป CI3 / โค้ด <? เก่า (default: On)
   aptstack run                   dev console: start + บล็อกหน้าจอ กด Ctrl+C หยุด (ไม่ต้อง register service)
   aptstack status                รวม mapping พอร์ต -> program
   aptstack backup [file.sql]       dump ทุก database ไป data\dumps\
@@ -3457,6 +3587,8 @@ switch ($Command.ToLower()) {
     'run'         { Cmd-Run }
     'stop'        { Cmd-Stop $Action }
     'ports'       { Cmd-Ports $Action }
+    'shorttag'    { Cmd-ShortTag $Action }
+    'short_open_tag' { Cmd-ShortTag $Action }
     'restart'     { Cmd-Restart }
     'status'      { Cmd-Status }
     'doctor'      { Cmd-Doctor }

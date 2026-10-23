@@ -246,6 +246,16 @@ aptstack doctor</code></pre>
 <pre style="margin:8px 0 0"><code>error_reporting(E_ALL &amp; ~E_DEPRECATED &amp; ~E_NOTICE &amp; ~E_STRICT);</code></pre>
 </div>
 
+<h2 id="s4c">4c. short_open_tag (แอป CI3 / โค้ด &lt;? เก่า)</h2>
+<p>แอป CodeIgniter 3 ชอบใช้ <code>&lt;?</code> — ถ้าปิดจะขึ้น
+<b>ParseError: Unclosed &#123;</b></p>
+<pre><code>aptstack shorttag          <span style="color:#6b7280">:: ดูค่า</span>
+aptstack shorttag on       <span style="color:#6b7280">:: เปิด (default ใหม่)</span>
+aptstack shorttag off      <span style="color:#6b7280">:: ปิด</span>
+aptstack restart</code></pre>
+<p><code>start</code> / <code>doctor</code> โชว์สถานะให้เห็นทุกครั้ง · ค่าถาวรอยู่ที่
+<code>templates\php-hardening.ini</code></p>
+
 <h2 id="s4b">4b. เปลี่ยน Apache / MySQL (คำสั่งเดียว)</h2>
 <pre><code>aptstack add apache C:\Downloads\httpd-2.4.69-Win64-VS18.zip
 aptstack use apache 2.4.69       <span style="color:#6b7280">:: เลือก + restart ให้เอง</span>

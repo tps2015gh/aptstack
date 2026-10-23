@@ -370,6 +370,7 @@ aptstack logs all
 | อาการ | ทำอะไร |
 |---|---|
 | หน้าแอปขาว / ขึ้น `mysqli_connect() ไม่มี` | `aptstack restart` (php.ini generate ใหม่) |
+| CI3 ขึ้น `Unclosed {` / แอป `<?` เก่าพัง | `aptstack shorttag on` แล้ว `aptstack restart` |
 | พอร์ตชน | `aptstack ports` ดู exe path → `aptstack stop <port>` (ถามก่อนถ้าของคนอื่น) หรือแก้ port ใน `config\stack.json` แล้ว restart |
 | อยากดู log | `logs\php-error.log`, `logs\mariadb-error.log` |
 | `aptstack` ไม่รู้จัก | ต้อง `cd` อยู่ที่โฟลเดอร์นี้ก่อน หรือใช้ `as` |
