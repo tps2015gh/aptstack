@@ -157,8 +157,8 @@ aptstack list             :: เห็น path เต็มของแต่ล
 เปิดดู:
 - `hello-app` → ตาราง "สวัสดี — aptstack + MariaDB ทำงานแล้ว"
 - `todo-app` → เพิ่มงานได้จริง (POST เขียนลง DB แล้วแสดงกลับ)
-- `sysinfo-app` → ตัวอย่างผลบนเครื่องจริง:
-  `Hostname MY-PC / CPU Example-CPU 6 cores 12 threads / RAM 7.9 GB / IPv4 192.168.x.x / Network 192.168.1.0/24 (~254 hosts) / Database MariaDB 11.4.13 (เชื่อมต่อ OK)`
+- `sysinfo-app` → ตัวอย่างผลบนเครื่องจริง (ค่าจะต่างกันไปตามเครื่อง):
+  `Hostname MY-PC / CPU Example-CPU 6 cores 12 threads / RAM 8.0 GB / IPv4 192.168.x.x / Network 192.168.1.0/24 (~254 hosts) / Database MariaDB 11.4.13 (เชื่อมต่อ OK)`
 
 > ⚠️ `sysinfo-app` ใช้ `ipconfig /all` + PowerShell CIM (**ไม่ใช้ `wmic`** — ถูกถอดออกจาก
 > Windows 11 24H2 แล้ว) และอ่านค่า **ตอนเรียก request เท่านั้น** ไม่เขียนไฟล์ใด ๆ
