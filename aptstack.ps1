@@ -1441,6 +1441,18 @@ function Get-OfficialUrls([string]$kind, [string]$ver) {
             if ($href -notmatch '^https?://') { $href = 'https://www.apachelounge.com' + $href }
             return @($href)
         }
+        'pma' {
+            # phpMyAdmin: https://files.phpmyadmin.net/phpMyAdmin/<ver>/phpMyAdmin-<ver>-all-languages.zip
+            if ($ver -eq 'latest' -or -not $ver) {
+                $page = Get-WebText 'https://www.phpmyadmin.net/downloads/'
+                if ($page) {
+                    $m = [regex]::Match($page, 'phpMyAdmin[-/](\d+\.\d+\.\d+)', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+                    if ($m.Success) { $ver = $m.Groups[1].Value }
+                }
+                if (-not $ver -or $ver -eq 'latest') { $ver = '5.2.2' }   # fallback ล่าสุดที่รู้
+            }
+            return @("https://files.phpmyadmin.net/phpMyAdmin/$ver/phpMyAdmin-$ver-all-languages.zip")
+        }
         default { return @() }
     }
 }
@@ -1474,14 +1486,14 @@ function Get-SourceMeta($destDir) {
 
 function Cmd-Add($kind, $source, $extra) {
     if (-not $kind -or -not $source) {
-        throw 'ใช้: aptstack add <app|php|mysql|apache> <path|url|version> [name]   (เช่น: aptstack add php 8.3.36)'
+        throw 'ใช้: aptstack add <app|php|mysql|apache|pma> <path|url|version> [name]   (เช่น: aptstack add php 8.3.36)'
     }
     Ensure-Dirs
 
     # ใส่แค่เลขเวอร์ชัน / latest -> เติม URL ทางการให้เอง แล้ว print ให้เห็น (จะได้ copy โหลดเองได้)
     $origSource = $source
     $candidates = @($source)
-    $isBinary = @('php', 'mysql', 'apache') -contains ("$kind".ToLower())
+    $isBinary = @('php', 'mysql', 'apache', 'pma') -contains ("$kind".ToLower())
     if ($isBinary -and ($source -eq 'latest' -or $source -match '^\d{1,2}\.\d{1,2}(\.\d{1,2})?$')) {
         $candidates = @(Get-OfficialUrls $kind $source)
         if ($candidates.Count -eq 0) {
@@ -1588,7 +1600,47 @@ function Cmd-Add($kind, $source, $extra) {
             }
             Write-Info 'เปิดใช้: แก้ config\stack.json -> "webMode": "apache" แล้ว aptstack restart'
         }
-        default { throw "ไม่รู้จักชนิด: $kind (ใช้ app | php | mysql | apache)" }
+        'pma' {
+            if (Test-Path $src -PathType Container) { throw 'phpMyAdmin ต้องเป็นไฟล์ .zip' }
+            $leaf = [IO.Path]::GetFileNameWithoutExtension((Split-Path $src -Leaf))
+            $name = if ($leaf -match 'phpMyAdmin-(\d+\.\d+\.\d+)') { $Matches[1] } else { $leaf }
+            $dest = Join-Path $Script:P.Www 'phpmyadmin'
+            Write-Head "ติดตั้ง phpMyAdmin $name -> www\phpmyadmin"
+            if (Test-Path $dest) {
+                Write-Warn2 'มี www\phpmyadmin อยู่แล้ว — สำรองชื่อเดิมเป็น phpmyadmin.bak'
+                $bak = Join-Path $Script:P.Www ('phpmyadmin.bak-' + (Get-Date -Format 'yyyyMMdd_HHmmss'))
+                Move-Item -LiteralPath $dest -Destination $bak -Force
+            }
+            Expand-AndFlatten $src $dest
+            if (-not (Test-Path (Join-Path $dest 'index.php'))) { throw 'zip ไม่มี index.php — ไม่ใช่ phpMyAdmin หรือเปล่า' }
+            # config.inc.php ชี้ stack นี้ (port/user/pass จาก stack.json)
+            $cfg = Get-Config
+            $secret = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 32 | ForEach-Object { [char]$_ })
+            $pmaCfg = @"
+<?php
+/* aptstack phpMyAdmin config — generate อัตโนมัติ (port/user/pass จาก config\stack.json) */
+`$cfg['blowfish_secret'] = '$secret';
+`$i = 0;
+`$i++;
+`$cfg['Servers'][`$i]['host'] = '127.0.0.1';
+`$cfg['Servers'][`$i]['port'] = '$($cfg.dbPort)';
+`$cfg['Servers'][`$i]['auth_type'] = 'config';
+`$cfg['Servers'][`$i]['user'] = '$($cfg.dbUser)';
+`$cfg['Servers'][`$i]['password'] = '$($cfg.dbPass)';
+`$cfg['Servers'][`$i]['compress'] = false;
+`$cfg['Servers'][`$i]['AllowNoPassword'] = false;
+`$cfg['UploadDir'] = '';
+`$cfg['SaveDir'] = '';
+`$cfg['CheckConfigurationPermissions'] = false;
+"@
+            Write-Utf8NoBom (Join-Path $dest 'config.inc.php') ($pmaCfg + "`r`n")
+            Set-SourceMeta $dest $kind $origSource
+            Write-Ok "ติดตั้ง phpMyAdmin $name แล้ว"
+            Write-Info "เปิด: http://127.0.0.1:$($cfg.httpPort)/phpmyadmin/"
+            Write-Info 'เปลี่ยนเวอร์ชัน: aptstack add pma 5.2.1  (ของเดิมจะถูก backup)'
+            Write-Info 'ดูรายการ: aptstack list --available pma'
+        }
+        default { throw "ไม่รู้จักชนิด: $kind (ใช้ app | php | mysql | apache | pma)" }
     }
 }
 
@@ -1667,8 +1719,8 @@ function Cmd-List {
 function Cmd-ListAvailable([string]$kind) {
     $kind = ("$kind".ToLower() -replace '^\-\-?', '')
     if (-not $kind) { $kind = 'all' }
-    if (@('all', 'php', 'mysql', 'apache') -notcontains $kind) {
-        throw "ไม่รู้จัก '$kind' — ใช้: aptstack list --available [php|mysql|apache]"
+    if (@('all', 'php', 'mysql', 'apache', 'pma') -notcontains $kind) {
+        throw "ไม่รู้จัก '$kind' — ใช้: aptstack list --available [php|mysql|apache|pma]"
     }
 
     if ($kind -eq 'all' -or $kind -eq 'php') {
@@ -1755,6 +1807,37 @@ function Cmd-ListAvailable([string]$kind) {
             }
             Write-Info 'Apache Lounge เก็บเฉพาะ build ล่าสุด — เวอร์ชันเก่าต้องส่ง URL เต็ม/path เอง'
             Write-Info 'ติดตั้ง: aptstack add apache 2.4.69'
+        }
+    }
+
+    if ($kind -eq 'all' -or $kind -eq 'pma') {
+        $html = Get-WebText 'https://www.phpmyadmin.net/downloads/'
+        $found = @{}
+        if ($html) {
+            foreach ($m in [regex]::Matches($html, 'phpMyAdmin-(\d+\.\d+\.\d+)-all-languages', [Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+                $found[$m.Groups[1].Value] = $true
+            }
+            foreach ($m in [regex]::Matches($html, 'phpMyAdmin[-/](\d+\.\d+\.\d+)', [Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+                $found[$m.Groups[1].Value] = $true
+            }
+        }
+        $pmaDir = Join-Path $Script:P.Www 'phpmyadmin'
+        $curPma = $null
+        if (Test-Path (Join-Path $pmaDir 'README')) {
+            $rt = Get-Content (Join-Path $pmaDir 'README') -Raw -EA SilentlyContinue
+            if ($rt -match 'Version\s+(\d+\.\d+\.\d+)') { $curPma = $Matches[1] }
+        }
+        Write-Head 'phpMyAdmin ที่โหลดได้'
+        if ($found.Count -eq 0) {
+            Write-Warn2 'ดึงรายการไม่ได้ — ลอง: aptstack add pma 5.2.1 หรือส่ง URL เอง'
+            Write-Info 'หน้าทางการ: https://www.phpmyadmin.net/downloads/'
+        } else {
+            foreach ($v in ($found.Keys | Sort-Object -Property { [version]$_ } -Descending)) {
+                $mark = if ($curPma -eq $v) { '   * ใช้อยู่' } else { '' }
+                Write-Host ("   {0,-9} {1}" -f $v, $mark) -ForegroundColor Gray
+            }
+            Write-Info "ติดตั้ง: aptstack add pma <ver|latest|url|zip>"
+            Write-Info 'เปิดใช้: http://127.0.0.1:<httpPort>/phpmyadmin/'
         }
     }
     Write-Host ''
@@ -2851,7 +2934,150 @@ function Cmd-Size {
     Show-SizeCli (Get-SizeInfo)
 }
 
-function Cmd-Report([string]$OutPath) {
+# ---------------------------------------------------------- database inventory
+function Get-DatabaseStats {
+    # รายชื่อ database + ขนาด (MB) จาก information_schema — ต้องมี DB รันอยู่
+    $cfg = Get-Config
+    if (Test-PortFree $cfg.dbPort) { return @() }
+    $client = Get-MysqlClient $cfg
+    $sql = @"
+SELECT table_schema AS db_name,
+       COUNT(*) AS tables_n,
+       ROUND(COALESCE(SUM(data_length+index_length),0)/1024/1024, 2) AS size_mb,
+       ROUND(COALESCE(SUM(data_length),0)/1024/1024, 2) AS data_mb,
+       ROUND(COALESCE(SUM(index_length),0)/1024/1024, 2) AS index_mb
+FROM information_schema.tables
+WHERE table_schema NOT IN ('information_schema','performance_schema','mysql','sys','phpmyadmin')
+GROUP BY table_schema
+ORDER BY size_mb DESC;
+"@
+    $r = Invoke-MysqlSql $cfg $client $sql
+    $out = @()
+    foreach ($line in @($r.Out)) {
+        if (-not $line) { continue }
+        if ($line -match '^\s*db_name\s') { continue }
+        if ($line -match '^-+$') { continue }
+        $p = "$line" -split "`t"
+        if ($p.Count -lt 5) { $p = "$line" -split '\s+' }
+        if ($p.Count -lt 5) { continue }
+        $out += [pscustomobject]@{
+            Name    = $p[0]
+            Tables  = [int]$p[1]
+            SizeMB  = [double]$p[2]
+            DataMB  = [double]$p[3]
+            IndexMB = [double]$p[4]
+        }
+    }
+    return $out
+}
+
+function Get-DatabaseTables([string]$dbName) {
+    $cfg = Get-Config
+    if (Test-PortFree $cfg.dbPort) { return @() }
+    $client = Get-MysqlClient $cfg
+    $sql = @"
+SELECT table_name AS tbl,
+       table_rows AS rows_n,
+       ROUND(COALESCE(data_length+index_length,0)/1024/1024, 2) AS size_mb,
+       ROUND(COALESCE(data_length,0)/1024/1024, 2) AS data_mb,
+       engine
+FROM information_schema.tables
+WHERE table_schema = '$dbName'
+ORDER BY size_mb DESC;
+"@
+    $r = Invoke-MysqlSql $cfg $client $sql
+    $out = @()
+    foreach ($line in @($r.Out)) {
+        if (-not $line) { continue }
+        if ($line -match '^\s*tbl\s') { continue }
+        if ($line -match '^-+$') { continue }
+        $p = "$line" -split "`t"
+        if ($p.Count -lt 5) { $p = "$line" -split '\s+' }
+        if ($p.Count -lt 5) { continue }
+        $out += [pscustomobject]@{
+            Table  = $p[0]
+            Rows   = [long]$p[1]
+            SizeMB = [double]$p[2]
+            DataMB = [double]$p[3]
+            Engine = $p[4]
+        }
+    }
+    return $out
+}
+
+function Cmd-ReportDb([string]$dbName = '') {
+    # aptstack report db — ดู database ทุกก้อน + table + ขนาด + ดิสก์รวม
+    # aptstack report db <name> — เจาะตารางใน database นั้น
+    $cfg = Get-Config
+    Write-Head 'database inventory (report db)'
+    if (Test-PortFree $cfg.dbPort) {
+        Write-Err2 "DB ไม่ได้รัน (port $($cfg.dbPort)) — aptstack start ก่อน"
+        return
+    }
+    Write-Info "server: 127.0.0.1:$($cfg.dbPort)  mode=$($cfg.dbMode)"
+    $dbs = @(Get-DatabaseStats)
+    if ($dbs.Count -eq 0) {
+        Write-Warn2 'ไม่เห็น database (ยังไม่มีข้อมูล หรือสิทธิ์ไม่พอ)'
+        Write-Info 'import: aptstack import <file.sql> [dbname]'
+        return
+    }
+    Write-Host ''
+    Write-Host ('  {0,-28} {1,6} {2,10} {3,10} {4,10}' -f 'Database', 'Tables', 'Total MB', 'Data MB', 'Index MB') -ForegroundColor Cyan
+    Write-Host ('  {0}' -f ('-' * 70)) -ForegroundColor DarkGray
+    $total = 0.0
+    foreach ($d in $dbs) {
+        $total += $d.SizeMB
+        Write-Host ('  {0,-28} {1,6} {2,10:N2} {3,10:N2} {4,10:N2}' -f $d.Name, $d.Tables, $d.SizeMB, $d.DataMB, $d.IndexMB)
+    }
+    Write-Host ('  {0}' -f ('-' * 70)) -ForegroundColor DarkGray
+    Write-Host ('  {0,-28} {1,6} {2,10:N2}' -f 'ALL', '', $total) -ForegroundColor Green
+
+    # ดิสก์ datadir + dumps
+    $mysql = Resolve-MySql $cfg.mysql
+    $datadir = if ($mysql) { Get-DataDir $mysql } else { '' }
+    $ddMB = if ($datadir -and (Test-Path $datadir)) { Get-FolderSizeMB $datadir } else { 0 }
+    $dumpMB = Get-FolderSizeMB $Script:P.Dumps
+    $diskMB = [math]::Round($ddMB + $dumpMB, 1)
+    Write-Host ''
+    Write-Info ("datadir  : {0}  ({1:N1} MB)" -f $datadir, $ddMB)
+    Write-Info ("dumps\\   : {0:N1} MB" -f $dumpMB)
+    Write-Info ("disk รวม : {0:N1} MB  (datadir + dumps)" -f $diskMB)
+    Write-Info ('หมายเหตุ: size_mb จาก information_schema ≈ ขนาดจริง · dump/log อาจไม่รวมในตัวเลข SQL')
+
+    # ตารางใน db แรก (ตัวใหญ่สุด) หรือ db ที่ user ระบุ
+    $show = $dbName
+    if (-not $show) { $show = $dbs[0].Name }
+    Write-Host ''
+    Write-Head "ตารางใน database: $show"
+    $tables = @(Get-DatabaseTables $show)
+    if ($tables.Count -eq 0) {
+        Write-Warn2 "ไม่เห็นตารางใน $show"
+        return
+    }
+    Write-Host ('  {0,-36} {1,12} {2,10} {3,10}' -f 'Table', 'Rows', 'MB', 'Engine') -ForegroundColor Cyan
+    Write-Host ('  {0}' -f ('-' * 72)) -ForegroundColor DarkGray
+    $sum = 0.0
+    foreach ($t in $tables) {
+        $sum += $t.SizeMB
+        Write-Host ('  {0,-36} {1,12} {2,10:N2} {3,10}' -f $t.Table, $t.Rows, $t.SizeMB, $t.Engine)
+    }
+    Write-Host ('  {0}' -f ('-' * 72)) -ForegroundColor DarkGray
+    Write-Host ('  {0,-36} {1,12} {2,10:N2}' -f 'SUM', '', $sum) -ForegroundColor Green
+    Write-Host ''
+    Write-Info "ดู db อื่น: aptstack report db <dbname>"
+    Write-Info 'รายชื่อ db ทั้งหมด: aptstack report db   (แล้วดูตารางบน)'
+}
+
+function Cmd-Report([string]$a, [string]$b) {
+    # aptstack report           -> HTML สรุปสถานะ
+    # aptstack report <path>    -> HTML ไป path ที่ระบุ
+    # aptstack report db        -> ตาราง inventory database
+    # aptstack report db <name> -> ตารางใน db นั้น
+    if ("$a".ToLower() -eq 'db') {
+        Cmd-ReportDb $b
+        return
+    }
+    $OutPath = $a
     # สรุปสถานะการติดตั้งทั้งหมดเป็น HTML สำหรับเปิดดู/พิมพ์เครื่องพิมพ์
     Ensure-Dirs
     $cfg = Get-Config
@@ -2948,6 +3174,15 @@ function Cmd-Report([string]$OutPath) {
     # ---- ขนาด/พื้นที่ (ตัวเดียวกับ aptstack size) ----
     $sz = Get-SizeInfo
     $datadir = if ($mysql) { Get-DataDir $mysql } else { '' }
+
+    # ---- inventory database (ก้อน + ขนาด) ----
+    $dbStats = @()
+    $dbTotalMB = 0.0
+    if ($cfg.dbMode -ne 'external' -and $mysql -and -not (Test-PortFree $cfg.dbPort)) {
+        try { $dbStats = @(Get-DatabaseStats) } catch { $dbStats = @() }
+        foreach ($d in $dbStats) { $dbTotalMB += $d.SizeMB }
+        $dbTotalMB = [math]::Round($dbTotalMB, 2)
+    }
 
     # ---- นับผล checks ----
     $nOK = @($checks | Where-Object { $_.S -eq 'OK' }).Count
@@ -3129,6 +3364,20 @@ $(if($dataSzRows.Length -gt 0){$dataSzRows.ToString()}else{'<tr><td colspan="3">
 <p class="small">config\: <code>$([Net.WebUtility]::HtmlEncode($Script:P.ConfigDir))</code>
 · datadir: <code>$(if($datadir){[Net.WebUtility]::HtmlEncode($datadir)}else{'-'})</code></p>
 
+<h2>7b. Database (ก้อน + ขนาด)</h2>
+<p class="small">เจาะตารางใน db: <code>aptstack report db</code> หรือ <code>aptstack report db &lt;name&gt;</code></p>
+<table>
+<tr><th>Database</th><th style="width:70px">Tables</th><th style="width:90px">Total MB</th><th style="width:90px">Data MB</th><th style="width:90px">Index MB</th></tr>
+$(if($dbStats.Length -gt 0){
+  ($dbStats | ForEach-Object {
+    "<tr><td>$([Net.WebUtility]::HtmlEncode($_.Name))</td><td>$($_.Tables)</td><td>$($_.SizeMB.ToString('0.00'))</td><td>$($_.DataMB.ToString('0.00'))</td><td>$($_.IndexMB.ToString('0.00'))</td></tr>"
+  }) -join "`n"
+} else {
+  '<tr><td colspan="5">(DB ยังไม่รัน หรือยังไม่มีข้อมูล)</td></tr>'
+})
+<tr><td><b>รวมทุกก้อน</b></td><td></td><td><b>$($dbTotalMB.ToString('0.00'))</b></td><td></td><td></td></tr>
+</table>
+
 <h2>8. คำสั่งที่ใช้บ่อย</h2>
 <table class="kv">
 <tr><td>สลับแอป</td><td><code>aptstack use &lt;ชื่อ&gt;</code> · <code>next</code> · <code>prev</code> · <code>use -</code></td></tr>
@@ -3136,6 +3385,8 @@ $(if($dataSzRows.Length -gt 0){$dataSzRows.ToString()}else{'<tr><td colspan="3">
 <tr><td>ตรวจซ้ำ</td><td><code>aptstack doctor</code></td></tr>
 <tr><td>ดู log</td><td><code>aptstack logs apache|mysql|php</code></td></tr>
 <tr><td>backup</td><td><code>aptstack backup</code></td></tr>
+<tr><td>database inventory</td><td><code>aptstack report db</code> · <code>aptstack report db &lt;name&gt;</code></td></tr>
+<tr><td>record/play script</td><td><code>aptstack record start</code> · <code>aptstack play scripts\...</code></td></tr>
 </table>
 
 <footer>
@@ -3155,6 +3406,135 @@ $(if($dataSzRows.Length -gt 0){$dataSzRows.ToString()}else{'<tr><td colspan="3">
     Write-Info "ไฟล์: $OutPath"
     Write-Info 'เปิดดู/พิมพ์: Ctrl+P ในเบราว์เซอร์ (A4)'
     try { Start-Process $OutPath | Out-Null; Write-Info 'เปิดในเบราว์เซอร์ให้แล้ว' } catch { }
+}
+
+# ------------------------------------------------- record / play (docker-like script)
+function Get-RecordFlagPath { Join-Path $Script:P.ConfigDir 'record.flag' }
+
+function Get-RecordScriptPath {
+    $f = Get-RecordFlagPath
+    if (-not (Test-Path $f)) { return $null }
+    $p = (Get-Content $f -Raw -ErrorAction SilentlyContinue)
+    if ($p) { return $p.Trim() }
+    return $null
+}
+
+function Write-RecordEntry([string]$Command, [string]$Action, [string]$Value, [string]$Extra) {
+    # เก็บคำสั่งที่รันลง .ps1 (record อยู่เท่านั้น) — เรียกซ้ำได้เหมือน docker compose script
+    $path = Get-RecordScriptPath
+    if (-not $path) { return }
+    $skip = @('record', 'play', 'help', 'h', '?', '/?', '--help', 'service-run', 'run')
+    if ($skip -contains "$Command".ToLower()) { return }
+    $parts = @('aptstack.cmd', "$Command")
+    if ($Action) { $parts += "$Action" }
+    if ($Value) { $parts += "$Value" }
+    if ($Extra) { $parts += "$Extra" }
+    $line = ($parts -join ' ')
+    try {
+        $hdr = ''
+        if (-not (Test-Path $path)) {
+            $dir = Split-Path -Parent $path
+            if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+            $hdr = @"
+# aptstack script (บันทึกโดย aptstack record)
+# รันซ้ำ:  aptstack play `"$path`"
+# สร้างเมื่อ: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+# bundle : $Root
+
+"@
+        }
+        Add-Content -Path $path -Value ($hdr + $line) -Encoding UTF8
+    } catch { }
+}
+
+function Cmd-Record([string]$action, [string]$name) {
+    $act = if ($action) { "$action".ToLower() } else { 'status' }
+    $flag = Get-RecordFlagPath
+    $scriptsDir = Join-Path $Root 'scripts'
+    switch ($act) {
+        'start' {
+            if (Test-Path $flag) { Write-Warn2 "กำลัง record อยู่แล้ว: $(Get-RecordScriptPath) — stop ก่อน"; return }
+            if (-not (Test-Path $scriptsDir)) { New-Item -ItemType Directory -Path $scriptsDir -Force | Out-Null }
+            $fn = if ($name) { "$name" -replace '[^\w\-.]', '_' } else { 'session-' + (Get-Date -Format 'yyyyMMdd_HHmmss') }
+            if ($fn -notmatch '\.ps1$') { $fn = "$fn.ps1" }
+            $path = Join-Path $scriptsDir $fn
+            Write-Utf8NoBom $flag ($path + "`r`n")
+            # สร้าง header ทันที
+            $hdr = @"
+# aptstack script (บันทึกโดย aptstack record)
+# รันซ้ำ:  aptstack play `"$path`"
+# สร้างเมื่อ: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+# bundle : $Root
+
+"@
+            Write-Utf8NoBom $path $hdr
+            Write-Head 'record — เริ่มบันทึกคำสั่งเป็น script'
+            Write-Ok "กำลังบันทึก: $path"
+            Write-Info 'คำสั่งที่สั่งหลังจากนี้ (use/start/stop/...) จะถูกเขียนลงไฟล์นี้'
+            Write-Info 'หยุด: aptstack record stop'
+            Write-Info 'รันซ้ำ: aptstack play <file.ps1>'
+        }
+        'stop' {
+            $path = Get-RecordScriptPath
+            if (-not $path) { Write-Info 'ยังไม่ได้ record'; return }
+            Remove-Item $flag -Force -ErrorAction SilentlyContinue
+            Write-Head 'record — หยุดบันทึก'
+            Write-Ok "script: $path"
+            if (Test-Path $path) {
+                $n = @((Get-Content $path | Where-Object { $_ -match 'aptstack\.cmd' })).Count
+                Write-Info "คำสั่งที่บันทึก: $n บรรทัด"
+            }
+            Write-Info "รันซ้ำ: aptstack play `"$path`""
+        }
+        default {
+            $cur = Get-RecordScriptPath
+            Write-Head 'record'
+            if ($cur) {
+                Write-Host '  กำลัง record อยู่' -ForegroundColor Green
+                Write-Info "file: $cur"
+                Write-Info 'หยุด: aptstack record stop'
+            } else {
+                Write-Info 'ไม่ได้ record อยู่'
+                Write-Info 'เริ่ม: aptstack record start [ชื่อไฟล์]'
+            }
+            Write-Info 'ดู script ที่มี: dir scripts\*.ps1'
+            Write-Info 'รันซ้ำ: aptstack play scripts\session-....ps1'
+        }
+    }
+}
+
+function Cmd-Play([string]$file) {
+    if (-not $file) { throw 'ใช้: aptstack play <script.ps1>' }
+    $path = $file
+    if ($path -notmatch '^[A-Za-z]:[\\/]') { $path = Join-Path $Root $path }
+    if (-not (Test-Path $path)) { throw "ไม่พบ script: $path" }
+    $lines = @(Get-Content $path -Encoding UTF8 | Where-Object {
+        $t = "$_".Trim()
+        $t -and (-not $t.StartsWith('#')) -and ($t -match 'aptstack\.cmd|^\s*(use|start|stop|restart|list|doctor)\b')
+    })
+    Write-Head "play — รัน script ($($lines.Count) คำสั่ง)"
+    Write-Info $path
+    $i = 0
+    foreach ($raw in $lines) {
+        $i++
+        $t = "$raw".Trim() -replace '\s+', ' '
+        # normalize: aptstack.cmd X -> args for dispatcher
+        if ($t -match '^aptstack\.cmd\s+(.*)$') { $t = $Matches[1] }
+        elseif ($t -match '^as\.cmd\s+(.*)$') { $t = $Matches[1] }
+        $tok = @()
+        foreach ($w in ($t -split ' ')) { if ($w) { $tok += $w } }
+        if ($tok.Count -eq 0) { continue }
+        Write-Host ''
+        Write-Host ("  [{0}/{1}] aptstack {2}" -f $i, $lines.Count, $t) -ForegroundColor Cyan
+        try {
+            & $PSCommandPath @tok
+        } catch {
+            Write-Warn2 "บรรทัด $i พัง: $($_.Exception.Message)"
+            if (-not (Confirm-Action 'ทำต่อคำสั่งถัดไปไหม? (y = ทำต่อ)')) { Write-Info 'หยุด play'; return }
+        }
+    }
+    Write-Host ''
+    Write-Ok 'play จบแล้ว'
 }
 
 # ------------------------------------------------- confirm / clone / remove / migrate
@@ -3645,6 +4025,8 @@ function Cmd-Help {
   aptstack add app <folder|zip>    copy version ใหม่ลง แล้ว use เลย
   aptstack add apache <ver|zip|url> เพิ่ม Apache (เช่น 2.4.69 — โหลดจาก Apache Lounge ให้เอง) -> stack\apache\
   aptstack add mysql <version|zip> เพิ่ม MySQL/MariaDB -> stack\mysql\
+  aptstack add pma [ver|latest]    ติดตั้ง/เปลี่ยน phpMyAdmin -> www\phpmyadmin
+  aptstack list --available pma    ดูเวอร์ชัน phpMyAdmin ที่โหลดได้
 
   ── web / db mode (config\stack.json) ─────────────────
   "webMode":  "auto"|"apache"|"builtin"
@@ -3677,6 +4059,10 @@ function Cmd-Help {
   aptstack remove php|apache|mysql <ชื่อ> [data]  ลบ binary (data เก็บไว้ เว้นแต่ใส่ data แล้วยืนยัน DELETE)
   aptstack migrate mysql <ใหม่>    โยกข้อมูล DB ไป engine ใหม่ (dump -> switch -> restore)
   aptstack report [path]           สร้างหน้า HTML สรุปสถานะทั้งหมด (เปิดให้ + พิมพ์ได้)
+  aptstack report db [name]        inventory database (ก้อน/ตาราง/ขนาด/ดิสก์รวม)
+  aptstack record start [name]     บันทึกคำสั่งเป็น scripts\*.ps1 (รันซ้ำได้)
+  aptstack record stop | status
+  aptstack play <file.ps1>         รัน script ที่ record ไว้
   aptstack size                    ดูพื้นที่ทุกโฟลเดอร์ + เตือน bundle บวม / ดิสก์ใกล้เต็ม
   aptstack dist <app> [out] [nostack]  สร้างชุด deploy copy-paste (มี VERSIONS.txt + DEPLOY.txt)
   aptstack git init|status|clear   git ของ bundle บน server (track config เฉย ๆ / ลบ .git)
@@ -3759,7 +4145,9 @@ switch ($Command.ToLower()) {
     'seed'        { Cmd-Seed }
     'import'      { Cmd-Import $Action $Value }
     'samples'     { Cmd-Samples }
-    'report'      { Cmd-Report $Action }
+    'report'      { Cmd-Report $Action $Value }
+    'record'      { Cmd-Record $Action $Value }
+    'play'        { Cmd-Play $Action }
     'size'        { Cmd-Size }
     'dist'        { Cmd-Dist $Action $Value $Extra }
     'git'         { Cmd-Git $Action $Value }
@@ -3774,5 +4162,8 @@ switch ($Command.ToLower()) {
     'service-run' { Cmd-ServiceRun }
     default       { Cmd-Help }
 }
+
+# หลังรันคำสั่งสำเร็จ — ถ้า record อยู่ ให้เขียนลง script (ยกเว้น record/play เอง)
+if ($Command) { Write-RecordEntry $Command $Action $Value $Extra }
 
 

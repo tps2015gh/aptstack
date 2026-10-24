@@ -70,3 +70,7 @@ Desktop.ini
 *.p12
 /aptstack-report.html
 /dist_paste/
+
+# --- record scripts (session playbooks) ---
+/scripts/
+/www/phpmyadmin.bak*/

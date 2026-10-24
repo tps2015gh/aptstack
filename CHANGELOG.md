@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`aptstack record start|stop|status`** + **`aptstack play <file.ps1>`**
+  - บันทึกคำสั่ง (use/start/stop/...) เป็น `scripts\*.ps1` แล้วรันซ้ำได้ (แบบ docker script)
+- **`aptstack add pma [ver|latest|url|zip]`** — ติดตั้ง/เปลี่ยน phpMyAdmin → `www\phpmyadmin`
+  · generate `config.inc.php` จาก `stack.json` · backup ของเดิมอัตโนมัติ
+  · **`aptstack list --available pma`** ดูเวอร์ชันที่โหลดได้
+- **`aptstack report`** มีหัวข้อ Database (ก้อน/tables/MB)
+- **`aptstack report db [name]`** — inventory database + ตารางใน db + ขนาด datadir/dumps/รวมดิสก์
+
 ## 1.3.3 — 2026-10-24
 
 ### Added

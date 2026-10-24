@@ -295,6 +295,22 @@ $pdo = new PDO(
 <code>backup</code> = ออก · <code>migrate</code> = ย้าย engine ·
 ต้นแบบ db_manager.go</p>
 
+<h2 id="s4b3">4b3. record / play · phpMyAdmin · report db</h2>
+<pre><code>aptstack record start
+aptstack use todo-app
+aptstack start
+aptstack record stop
+aptstack play scripts\session-....ps1
+
+aptstack add pma latest
+aptstack list --available pma
+aptstack report db [name]</code></pre>
+<ul>
+<li><b>record/play</b> — บันทึกคำสั่งเป็น <code>scripts\*.ps1</code> รันซ้ำได้ (docker script)</li>
+<li><b>add pma</b> — ติดตั้ง phpMyAdmin → www\phpmyadmin · config จาก stack.json</li>
+<li><b>report db</b> — รายชื่อ database + ตาราง + ขนาด + datadir/dumps/ดิสก์รวม</li>
+</ul>
+
 <h2 id="s4c">4c. short_open_tag (แอป CI3 / โค้ด &lt;? เก่า)</h2>
 <p>แอป CodeIgniter 3 ชอบใช้ <code>&lt;?</code> — ถ้าปิดจะขึ้น
 <b>ParseError: Unclosed &#123;</b></p>
