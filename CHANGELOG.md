@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`aptstack config`** — ตั้ง webMode/dbMode/https/พอร์ต จาก CLI (ไม่แก้มือ stack.json)
+  - `config web apache|builtin|auto` · `config db internal|external` · `config https on|off`
+  - `config http <port>` · `config dbport <port>`
+- คู่กับ `aptstack db set-root` / `db add-user`
 ## 1.3.5 — 2026-10-24
 
 ### Fixed

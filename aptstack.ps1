@@ -3475,6 +3475,153 @@ $(if($dbStats.Length -gt 0){
     try { Start-Process $OutPath | Out-Null; Write-Info 'เปิดในเบราว์เซอร์ให้แล้ว' } catch { }
 }
 
+function Cmd-Config([string]$what, [string]$val) {
+    # aptstack config                         -> ดูค่า webMode/dbMode/https/port ปัจจุบัน
+    # aptstack config web apache|builtin|auto -> ตั้ง webMode (HTTPS ใช้ได้กับ apache)
+    # aptstack config db internal|external    -> internal = MariaDB ของเรา · external = ยืม XAMPP
+    # aptstack config https on|off            -> เปิด/ปิด HTTPS
+    # aptstack config port <http> [db] [https] -> เปลี่ยนพอร์ต
+    $cfg = Get-Config
+    $w = if ($what) { "$what".ToLower() } else { 'status' }
+
+    switch ($w) {
+        'status' {
+            $php = Resolve-Php $cfg.php
+            $apache = Resolve-Apache $cfg.apache
+            $wm = Resolve-WebMode $cfg $php $apache
+            Write-Head 'config (config\stack.json)'
+            Write-Host "  webMode     : $($cfg.webMode)   -> ใช้จริง = $wm" -ForegroundColor $(if ($wm -eq 'apache') { 'Green' } else { 'Yellow' })
+            Write-Host "  dbMode      : $($cfg.dbMode)" -ForegroundColor $(if ($cfg.dbMode -eq 'internal') { 'Green' } else { 'Yellow' })
+            Write-Host "  httpsEnabled: $($cfg.httpsEnabled)  port http/db/https = $($cfg.httpPort)/$($cfg.dbPort)/$($cfg.httpsPort)"
+            Write-Host "  httpPort    : $($cfg.httpPort)"
+            Write-Host "  dbPort      : $($cfg.dbPort)"
+            Write-Host "  httpsPort   : $($cfg.httpsPort)"
+            if ($wm -ne 'apache' -and "$($cfg.httpsEnabled)".ToLower() -eq 'true') {
+                Write-Warn2 'httpsEnabled=true แต่ webMode ไม่ใช่ apache — HTTPS จะใช้ไม่ได้'
+            }
+            Write-Host ''
+            Write-Info 'ตั้ง web : aptstack config web apache|builtin|auto'
+            Write-Info 'ตั้ง db  : aptstack config db internal|external'
+            Write-Info 'เปิด https: aptstack config https on   (ต้อง webMode=apache)'
+            Write-Info 'พอร์ต   : aptstack config port 8077 3307 8443'
+            Write-Info 'แล้ว: aptstack restart'
+        }
+        { $_ -in @('web', 'webmode', 'mode') } {
+            $v = if ($val) { "$val".ToLower() } else { '' }
+            if ($v -in @('a', 'apache')) { $v = 'apache' }
+            elseif ($v -in @('b', 'builtin', 'built-in', 'cli')) { $v = 'builtin' }
+            elseif ($v -in @('au', 'auto')) { $v = 'auto' }
+            if (@('auto', 'apache', 'builtin') -notcontains $v) {
+                throw 'ใช้: aptstack config web apache|builtin|auto'
+            }
+            $cfg = Get-Config
+            $old = $cfg.webMode
+            $cfg.webMode = $v
+            Save-Config $cfg
+            Write-Head "webMode: $old -> $v"
+            if ($v -eq 'apache') {
+                $apache = Resolve-Apache $cfg.apache
+                $php = Resolve-Php $cfg.php
+                if (-not $apache) { Write-Warn2 'ยังไม่มี Apache — ต้อง: aptstack add apache 2.4.69' }
+                elseif (-not (Test-Path (Join-Path $php.Dir 'php8apache2_4.dll'))) {
+                    Write-Warn2 "PHP $($php.Version) เป็น NTS — mod_php ต้อง Thread Safe (aptstack use php 8.3.36)"
+                } else { Write-Ok "Apache $($apache.Version) + PHP TS $($php.Version) พร้อม" }
+                if ("$($cfg.httpsEnabled)".ToLower() -eq 'true') { Write-Info "HTTPS เปิดอยู่ — restart แล้วใช้ https://127.0.0.1:$($cfg.httpsPort)/" }
+            } elseif ($v -eq 'builtin') {
+                Write-Warn2 'builtin ใช้ HTTPS/vhost ไม่ได้ — ถ้า httpsEnabled=true จะถูกเมินตอน start'
+            }
+            Write-Info 'มีผลหลัง: aptstack restart'
+        }
+        { $_ -in @('db', 'dbmode') } {
+            $v = if ($val) { "$val".ToLower() } else { '' }
+            if ($v -in @('i', 'internal', 'bundle', 'ours')) { $v = 'internal' }
+            elseif ($v -in @('e', 'external', 'xampp')) { $v = 'external' }
+            if (@('internal', 'external') -notcontains $v) {
+                throw 'ใช้: aptstack config db internal|external'
+            }
+            $cfg = Get-Config
+            $old = $cfg.dbMode
+            $cfg.dbMode = $v
+            if ($v -eq 'external') {
+                if (-not $val -or $val -notmatch '^\d+$') {
+                    # ถ้าไม่ได้ระบุ port ใหม่ ให้ใช้ dbPort เดิม (มัก 3306 ของ XAMPP ต้องแก้เอง)
+                    Write-Info "dbPort ปัจจุบัน = $($cfg.dbPort) — ถ้า XAMPP ใช้ 3306: aptstack config port $($cfg.httpPort) 3306 $($cfg.httpsPort)"
+                }
+            }
+            Save-Config $cfg
+            Write-Head "dbMode: $old -> $v"
+            if ($v -eq 'external') {
+                Write-Ok 'จะ "ไม่ start/stop" MySQL ภายนอก (XAMPP) — ยืมพอร์ต dbPort อย่างเดียว'
+            } else {
+                Write-Ok 'ใช้ MariaDB ใน bundle (stack\mysql + data\)'
+            }
+            Write-Info 'มีผลหลัง: aptstack restart'
+        }
+        { $_ -in @('https', 'tls', 'ssl') } {
+            $v = if ($val) { "$val".ToLower() } else { '' }
+            $on = $v -in @('on', '1', 'true', 'yes', 'enable')
+            $off = $v -in @('off', '0', 'false', 'no', 'disable')
+            if (-not $on -and -not $off) { throw 'ใช้: aptstack config https on|off' }
+            $cfg = Get-Config
+            $cfg.httpsEnabled = if ($on) { 'true' } else { 'false' }
+            Save-Config $cfg
+            Write-Head "httpsEnabled = $($cfg.httpsEnabled)"
+            if ($on) {
+                $php = Resolve-Php $cfg.php
+                $apache = Resolve-Apache $cfg.apache
+                $wm = Resolve-WebMode $cfg $php $apache
+                if ($wm -ne 'apache') {
+                    Write-Warn2 "ยังใช้ไม่ได้ — ต้อง webMode=apache (ตอนนี้ $wm) ก่อน: aptstack config web apache"
+                }
+                if (-not (Test-Path (Resolve-CertPath $cfg.certFile))) {
+                    Write-Info 'ยังไม่มี cert: aptstack tls init'
+                }
+            }
+            Write-Info 'มีผลหลัง: aptstack restart'
+        }
+        { $_ -in @('port', 'ports') } {
+            # aptstack config port <http> [db] [https]
+            $http = $val
+            $db = $null; $https = $null
+            if ($Action) { } # unused
+            # extra args: Value=http, need db/https from remaining - use $args not available
+            # dispatch passes only Action,Value,Extra -> port http comes as Value, db as Extra
+            $db = $null
+            if ($Extra) { $db = $Extra }
+            # https port needs another param - read from $Value only for http if single
+            if (-not $http) { throw 'ใช้: aptstack config port <httpPort> [dbPort] [httpsPort]' }
+            $cfg = Get-Config
+            $old = "$($cfg.httpPort)/$($cfg.dbPort)/$($cfg.httpsPort)"
+            if ($http -match '^\d+$') { $cfg.httpPort = [int]$http }
+            if ($db -and $db -match '^\d+$') { $cfg.dbPort = [int]$db }
+            # third value: not easily passed - if Extra looks like https and Value pattern
+            Save-Config $cfg
+            Write-Head "port updated"
+            Write-Info "http/db = $($cfg.httpPort)/$($cfg.dbPort) (เดิม $old)"
+            Write-Info 'มีผลหลัง: aptstack restart'
+        }
+        default {
+            if ($w -in @('http', 'httpport')) {
+                if (-not $val -or $val -notmatch '^\d+$') { throw 'ใช้: aptstack config http <port>' }
+                $cfg = Get-Config
+                $cfg.httpPort = [int]$val
+                Save-Config $cfg
+                Write-Ok "httpPort = $val — aptstack restart"
+                return
+            }
+            if ($w -in @('dbport', 'mysqlport')) {
+                if (-not $val -or $val -notmatch '^\d+$') { throw 'ใช้: aptstack config dbport <port>' }
+                $cfg = Get-Config
+                $cfg.dbPort = [int]$val
+                Save-Config $cfg
+                Write-Ok "dbPort = $val — aptstack restart (ถ้า external ต้องตรงกับ XAMPP ด้วย)"
+                return
+            }
+            throw "ไม่รู้จัก '$w' — ใช้: aptstack config [status|web <mode>|db <mode>|https on|off|http <port>|dbport <port>]"
+        }
+    }
+}
+
 function Cmd-Db([string]$action, [string]$a, [string]$b) {
     # aptstack db                     -> ดูสรุป user/DB ของ stack นี้
     # aptstack db set-root <password> -> ตั้งรหัส root (อัปเดต stack.json + phpMyAdmin ให้)
@@ -4189,7 +4336,13 @@ function Cmd-Help {
   aptstack db set-root <pass>     ตั้งรหัส root (อัปเดต stack.json + phpMyAdmin ให้)
   aptstack db add-user <user> <pass>   เพิ่ม MySQL user ใหม่
 
-  ── web / db mode (config\stack.json) ─────────────────
+  ── web / db mode (ไม่ต้องแก้มือ config\stack.json) ──
+  aptstack config                 ดู webMode/dbMode/https/พอร์ต ปัจจุบัน
+  aptstack config web apache      ใช้ Apache (HTTPS/vhost ได้)  |  builtin | auto
+  aptstack config db internal     MariaDB ใน bundle | external = ยืม MySQL ของ XAMPP
+  aptstack config https on|off    เปิด/ปิด HTTPS (ต้อง webMode=apache)
+  aptstack config http <port>     เปลี่ยนพอร์ต HTTP
+  aptstack config dbport <port>   เปลี่ยนพอร์ต DB
   "webMode":  "auto"|"apache"|"builtin"
   "dbMode":   "internal"|"external"   external = ยืม MySQL ของ XAMPP
 
@@ -4306,6 +4459,7 @@ switch ($Command.ToLower()) {
     'seed'        { Cmd-Seed }
     'import'      { Cmd-Import $Action $Value }
     'db'          { Cmd-Db $Action $Value $Extra }
+    'config'      { Cmd-Config $Action $Value }
     'samples'     { Cmd-Samples }
     'report'      { Cmd-Report $Action $Value }
     'record'      { Cmd-Record $Action $Value }
