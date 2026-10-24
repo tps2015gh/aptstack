@@ -886,9 +886,10 @@ function Start-Db($cfg) {
     Set-Pid 'mysql' $p.Id
 
     # health probe: พอร์ตเปิดแล้วต้อง "ping ผ่าน client ได้จริง" ไม่ใช่แค่รอพอร์ต
+    # 60 วิ — ครั้งแรก/หลัง crash Aria recovery อาจกินเวลา >30 วิ (ไม่งั้นโดน kill กลางทาง)
     $healthy = $false
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    for ($w = 0; $w -lt 30; $w++) {
+    for ($w = 0; $w -lt 60; $w++) {
         Start-Sleep -Seconds 1
         if (Test-PortFree $cfg.dbPort) { continue }
         if (Invoke-DbAdmin $hit @('ping')) { $healthy = $true; break }
@@ -897,6 +898,7 @@ function Start-Db($cfg) {
     if (-not $healthy) {
         Write-Err2 "MariaDB ไม่ตอบ (รอ $($sw.Elapsed.TotalSeconds.ToString('0.0')) วิ) — ดู logs\mariadb-error.log"
         Write-Info 'เปิดดู: aptstack logs mysql'
+        Write-Info 'ถ้า log ขึ้น Aria recovery ให้ start ซ้ำ (อย่า kill ระหว่าง recovery)'
         Clear-Pid 'mysql'
         return $false
     }
@@ -1020,16 +1022,26 @@ function Stop-Db {
         $ok = $false
         if ($hit) { $ok = Invoke-DbAdmin $hit @('shutdown') }
         if ($ok) {
-            for ($w = 0; $w -lt 20; $w++) { Start-Sleep -Seconds 1; if (Test-PortFree $cfg.dbPort) { break } }
-            Write-Ok 'MariaDB ปิดแบบ clean shutdown'
-            Clear-Pid 'mysql'
-        } else {
+            # รอ flush ให้จบจริง — ปิดก่อน Aria/InnoDB เขียน = ตารางพัง
+            for ($w = 0; $w -lt 45; $w++) { Start-Sleep -Seconds 1; if (Test-PortFree $cfg.dbPort) { break } }
+            if (Test-PortFree $cfg.dbPort) {
+                Write-Ok 'MariaDB ปิดแบบ clean shutdown (รอ flush ครบ)'
+                Clear-Pid 'mysql'
+            } else {
+                Write-Warn2 'สั่ง shutdown แล้วแต่ port ยังไม่ว่าง — รอต่ออีกหน่อย (ไม่ kill ทันที)'
+                Start-Sleep -Seconds 10
+            }
+        }
+        if (-not (Test-PortFree $cfg.dbPort)) {
+            Write-Warn2 'ยังปิดไม่สนิท — force stop เป็นทางสุดท้าย (เสี่ยง Aria corrupt ถ้า server กำลังเขียน)'
+            Write-Info 'ครั้งหน้าอย่าเพิ่ง kill: รอ aptstack stop จน clean หรือรัน mariadb-admin shutdown เอง'
             Stop-ByPidFile 'mysql'
         }
     } else {
         Clear-Pid 'mysql'
     }
-    Stop-ByPort -port $cfg.dbPort -label 'MariaDB'
+    # เฉพาะพอร์ตที่ "ยังไม่ว่าง" เท่านั้น — อย่า kill ถ้า shutdown สำเร็จแล้ว
+    if (-not (Test-PortFree $cfg.dbPort)) { Stop-ByPort -port $cfg.dbPort -label 'MariaDB' }
 }
 
 function Sync-AppAliases {
