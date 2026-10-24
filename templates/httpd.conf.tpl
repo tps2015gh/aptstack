@@ -34,7 +34,7 @@ LoadModule setenvif_module     "{{APACHE_DIR}}/modules/mod_setenvif.so"
 LoadModule negotiation_module  "{{APACHE_DIR}}/modules/mod_negotiation.so"
 
 # --- PHP (mod_php) : ต้องเป็น Thread Safe build เท่านั้น ---
-LoadModule php_module "{{PHP_DIR}}/php8apache2_4.dll"
+LoadModule php_module "{{PHP_DIR}}/{{PHP_APACHE_DLL}}"
 PHPIniDir "{{PHP_INI}}"
 AddType application/x-httpd-php .php
 

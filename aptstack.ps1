@@ -204,6 +204,15 @@ function Get-CurrentAppName {
     return $cfg.app
 }
 
+function Test-PhpApacheMod([string]$Dir) {
+    # Thread Safe สำหรับ mod_php: มี php*apache2_4.dll
+    # PHP 8 = php8apache2_4.dll · PHP 7 = php7apache2_4.dll · PHP 5 = php5apache2_4.dll
+    # อย่าเช็คแค่ php8... — PHP 7.4 TS จะถูกตีเป็น NTS ผิด (บั๊คจริง)
+    if (-not $Dir -or -not (Test-Path $Dir)) { return $false }
+    $hit = @(Get-ChildItem -Path $Dir -Filter 'php*apache2_4.dll' -File -ErrorAction SilentlyContinue)
+    return ($hit.Count -gt 0)
+}
+
 function Get-PhpVersions {
     if (-not (Test-Path $Script:P.PhpRoot)) { return @() }
     $out = @()
@@ -222,7 +231,7 @@ function Get-PhpVersions {
                 Dir        = $d.FullName
                 Exe        = $exe
                 Usable     = (Test-Path $exe)
-                ApacheMod  = (Test-Path (Join-Path $d.FullName 'php8apache2_4.dll'))
+                ApacheMod  = (Test-PhpApacheMod $d.FullName)
             }
         }
     }
@@ -315,8 +324,8 @@ function Resolve-WebMode($cfg, $php, $apache) {
         'apache'  { return 'apache' }
         'builtin' { return 'builtin' }
         default   {
-            # auto: ใช้ Apache ถ้ามี ครบทั้ง httpd + php8apache2_4.dll (Thread Safe)
-            if ($apache -and $php -and (Test-Path (Join-Path $php.Dir 'php8apache2_4.dll'))) { return 'apache' }
+            # auto: ใช้ Apache ถ้ามี ครบทั้ง httpd + php*apache2_4.dll (Thread Safe รวม php7/php8)
+            if ($apache -and $php -and (Test-PhpApacheMod $php.Dir)) { return 'apache' }
             return 'builtin'
         }
     }
@@ -434,9 +443,14 @@ function New-HttpdConf($cfg, $php, $apacheHit) {
     $tpl = Join-Path $Script:P.Templates 'httpd.conf.tpl'
     if (-not (Test-Path $tpl)) { throw "ไม่พบ template: $tpl" }
     $conf = (Get-Content $tpl -Raw -Encoding UTF8).TrimStart([char]0xFEFF)
+    # ชื่อ DLL mod_php ไม่ใช่แค่ php8... — PHP7 = php7apache2_4.dll
+    $modDll = 'php8apache2_4.dll'
+    $modHit = @(Get-ChildItem -Path $php.Dir -Filter 'php*apache2_4.dll' -File -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ($modHit) { $modDll = $modHit[0].Name }
     $map = @{
         '{{APACHE_DIR}}' = ($apacheHit.Dir -replace '\\', '/')
         '{{PHP_DIR}}'    = ($php.Dir -replace '\\', '/')
+        '{{PHP_APACHE_DLL}}' = $modDll
         '{{PHP_INI}}'    = ($Script:P.ConfigDir -replace '\\', '/')
         '{{WWW}}'        = ($Script:P.Www -replace '\\', '/')
         '{{LOGS}}'       = ($Script:P.Logs -replace '\\', '/')
@@ -923,9 +937,9 @@ function Start-Web($cfg) {
 
     if ($mode -eq 'apache') {
         if (-not $apache) { Write-Err2 'webMode=apache แต่ไม่พบ httpd — ใช้: aptstack add apache <zip>'; return $false }
-        if (-not (Test-Path (Join-Path $php.Dir 'php8apache2_4.dll'))) {
+        if (-not (Test-PhpApacheMod $php.Dir)) {
             Write-Err2 "PHP $($php.Version) เป็น NTS — ใช้กับ mod_php ไม่ได้ (ต้อง Thread Safe)"
-            Write-Info 'ลอง: aptstack use php 8.3.36 หรือ add PHP แบบ Win32-vs16-x64 (ไม่ใช่ -nts-)'
+            Write-Info 'TS = มี php*apache2_4.dll · โหลด TS รุ่นเก่า: php-7.4.33-x64TS.zip บน php.watch'
             return $false
         }
         # generate php.ini ทุกครั้งที่ start (ไม่ใช่แค่ตอน use php) — กันค่า hardening ใหม่ไม่เข้า
@@ -1278,8 +1292,8 @@ function Switch-Apache {
     Save-Config $cfg
 
     $php = Resolve-Php $cfg.php
-    if (-not $php -or -not (Test-Path (Join-Path $php.Dir 'php8apache2_4.dll'))) {
-        Write-Warn2 "PHP $($cfg.php) ไม่มี php8apache2_4.dll (NTS) — Apache mod_php จะ start ไม่ขึ้น"
+    if (-not $php -or -not (Test-PhpApacheMod $php.Dir)) {
+        Write-Warn2 "PHP $($cfg.php) ไม่มี php*apache2_4.dll (NTS) — Apache mod_php จะ start ไม่ขึ้น"
         Write-Info 'สลับ PHP ก่อน: aptstack use php 8.3.36'
     }
 
@@ -1623,7 +1637,7 @@ function Cmd-Add($kind, $source, $extra) {
             $php = Resolve-Php $name
             Set-SourceMeta $dest $kind $origSource
             Write-Ok "ติดตั้ง PHP $($php.Version) เรียบร้อย"
-            if ($php.ApacheMod) { Write-Info 'Thread Safe build (มี php8apache2_4.dll)' }
+            if ($php.ApacheMod) { Write-Info 'Thread Safe build (มี php*apache2_4.dll — mod_php ใช้ได้)' }
             else { Write-Info 'NTS build — ใช้ได้กับ PHP built-in server ของ aptstack เท่านั้น' }
             $risk = Get-PhpRisk $php.Version
             if ($risk) { Write-Warn2 "version นี้ยังไม่ปลอดภัย ($risk) — ใช้เฉพาะทดสอบในเครื่องตัวเอง" }
@@ -1657,10 +1671,10 @@ function Cmd-Add($kind, $source, $extra) {
             }
             Set-SourceMeta $dest $kind $origSource
             $php = Resolve-Php (Get-Config).php
-            if ($php -and (Test-Path (Join-Path $php.Dir 'php8apache2_4.dll'))) {
+            if ($php -and (Test-PhpApacheMod $php.Dir)) {
                 Write-Ok "Apache พร้อมใช้ mod_php กับ PHP $($php.Version)"
             } else {
-                Write-Warn2 'PHP ที่เลือกยังไม่มี php8apache2_4.dll (NTS) — ต้องเปลี่ยนเป็น Thread Safe ก่อนใช้ Apache'
+                Write-Warn2 'PHP ที่เลือกยังไม่มี php*apache2_4.dll (NTS) — ต้องเปลี่ยนเป็น Thread Safe ก่อนใช้ Apache'
             }
             Write-Info 'เปิดใช้: แก้ config\stack.json -> "webMode": "apache" แล้ว aptstack restart'
         }
@@ -1994,8 +2008,8 @@ function Cmd-Doctor {
     $wm = Resolve-WebMode $cfg $php $apacheHit
     if ($wm -eq 'apache') {
         if (-not $apacheHit) { Write-Err2 'webMode=apache แต่ไม่พบ httpd — aptstack add apache <zip>'; $problems++ }
-        elseif (-not $php -or -not (Test-Path (Join-Path $php.Dir 'php8apache2_4.dll'))) {
-            Write-Err2 'Apache mode ต้องใช้ PHP แบบ Thread Safe (มี php8apache2_4.dll)'; $problems++
+        elseif (-not $php -or -not (Test-PhpApacheMod $php.Dir)) {
+            Write-Err2 'Apache mode ต้องใช้ PHP แบบ Thread Safe (มี php*apache2_4.dll)'; $problems++
         } else {
             $conf = Join-Path $Script:P.Runtime 'httpd.conf'
             if (-not (Test-Path $conf)) { Write-Warn2 'ยังไม่มี config\httpd.conf — รัน aptstack start' }
@@ -2738,7 +2752,141 @@ function Invoke-MysqlSql($cfg, [string]$client, [string]$SqlText, [string]$DbNam
     return [pscustomobject]@{ ExitCode = [int]$p.ExitCode; Out = $out; Err = $err }
 }
 
-function Cmd-Import([string]$file, [string]$dbName) {
+# ---------------------------------------------------------------- import ทั้ง install เก่า
+function Copy-StateTree([string]$src, [string]$dst, [string]$label, [int]$idx, [int]$total, [string[]]$xargs = @()) {
+    # robocopy stream % -> Write-Progress (แสดงสถานะทีละขั้นระหว่างย้าย)
+    # /E ทั้งหมด · /XJ ไม่ตาม junction (กันคัดลอกซ้ำ www\app -> versions\) · /MT หลายเธรด
+    $act = "ย้ายจาก aptstack เก่า — [$idx/$total] $label"
+    $pct = -1
+    $argList = @($src, $dst, '/E', '/XJ', '/R:2', '/W:2', '/MT:16', '/NFL', '/NDL', '/NJH', '/NP', '/BYTES') + $xargs
+    $lines = & robocopy @argList | ForEach-Object {
+        $line = "$_"
+        if ($line -match '^\s*(\d{1,3})\s*%') {
+            $p = [int]$Matches[1]
+            if ($p -gt 100) { $p = 100 }
+            if ($p -ne $pct) { $pct = $p; Write-Progress -Activity $act -PercentComplete $p -Status "$p%" }
+        }
+        $line
+    }
+    Write-Progress -Activity $act -Completed
+    $rc = $LASTEXITCODE
+    $copied = 0; $failed = 0
+    foreach ($l in $lines) {
+        if ("$l" -match 'Files\s*:\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)') {
+            $copied = [int]$Matches[2]; $failed = [int]$Matches[5]
+        }
+    }
+    if ($rc -ge 8) { throw "robocopy ล้มเหลว (exit $rc) — $label : $src" }
+    return [pscustomobject]@{ Label = $label; Copied = $copied; Failed = $failed; Exit = $rc }
+}
+
+function Cmd-ImportRoot([string]$oldRoot, [string]$flags) {
+    # ย้าย aptstack install เก่าทั้งตัว (state) เข้า root ปัจจุบัน:
+    #  คัดลอก: config(stack.json/vhosts/certs/sessions) + stack + versions + www + data + downloads
+    #  คงไว้ : โค้ดใหม่ (aptstack.ps1/templates/docs) · php.ini/my.ini/httpd.conf generate ใหม่ทุก start
+    $oldFull = (Resolve-Path -LiteralPath $oldRoot -ErrorAction Stop).Path
+    $newFull = (Resolve-Path -LiteralPath $Root).Path
+    if ($oldFull.TrimEnd('\') -ieq $newFull.TrimEnd('\')) { throw 'source = target — ชี้มาที่ root ปัจจุบันเอง' }
+    if (-not (Test-Path (Join-Path $oldFull 'aptstack.ps1'))) { throw "ไม่ใช่โฟลเดอร์ aptstack (ไม่มี aptstack.ps1): $oldFull" }
+    if (-not (Test-Path (Join-Path $oldFull 'config\stack.json'))) { Write-Warn2 'โฟลเดอร์เก่าไม่มี config\stack.json — จะคัดลอกเฉพาะของที่มีจริง' }
+
+    # root นี้ต้องหยุดก่อน (ไม่งั้นไฟล์ที่ copy ทับถูกใช้/ล็อกอยู่)
+    if (Test-Running 'web') { throw 'Web ของ root นี้กำลังรัน — aptstack stop ก่อน import' }
+    if (Test-Running 'mysql') { throw 'Database ของ root นี้กำลังรัน — aptstack stop ก่อน import' }
+    # โฟลเดอร์เก่าต้องไม่รันด้วย (คัดลอก data ตอน server เปิด = ข้อมูลเพี้ยน/ไฟล์ล็อก)
+    $busy = @()
+    try {
+        $busy = @(Get-CimInstance Win32_Process -EA Stop | Where-Object {
+            $_.ExecutablePath -and $_.ExecutablePath -like ($oldFull + '\*')
+        })
+    } catch { }
+    if ($busy.Count -gt 0) {
+        foreach ($b in $busy) { Write-Info ("   - {0} (pid {1})" -f $b.Name, $b.ProcessId) }
+        throw "มี process จากโฟลเดอร์เก่ากำลังรัน $($busy.Count) ตัว (ดูด้านบน) — ไปที่โฟลเดอร์เก่าแล้ว aptstack stop (หรือ service stop) ก่อน เพื่อกัน data เสียหาย"
+    }
+
+    $skipDl = "$flags" -match 'no-?downloads|skip-?downloads'
+    $cfgDirNew = Join-Path $Root 'config'
+    $phases = @(
+        [pscustomobject]@{ Label = 'config (stack.json, vhosts, certs, sessions)'; Src = (Join-Path $oldFull 'config'); Dst = $cfgDirNew; Kind = 'cfg' },
+        [pscustomobject]@{ Label = 'stack (binary apache/php/mysql)';             Src = (Join-Path $oldFull 'stack');      Dst = $Script:P.Stack;     Kind = 'dir' },
+        [pscustomobject]@{ Label = 'versions (app versions)';                     Src = (Join-Path $oldFull 'versions');   Dst = $Script:P.Versions;  Kind = 'dir' },
+        [pscustomobject]@{ Label = 'www (โค้ดแอป + phpMyAdmin)';                  Src = (Join-Path $oldFull 'www');        Dst = $Script:P.Www;       Kind = 'dir' },
+        [pscustomobject]@{ Label = 'data (database ทั้งหมด)';                      Src = (Join-Path $oldFull 'data');       Dst = $Script:P.Data;      Kind = 'data' },
+        [pscustomobject]@{ Label = 'downloads (ไฟล์ติดตั้งที่โหลดไว้)';            Src = (Join-Path $oldFull 'downloads');  Dst = $Script:P.Downloads; Kind = 'opt' }
+    )
+
+    Write-Head 'ย้าย aptstack เก่า -> root ปัจจุบัน (state เท่านั้น — โค้ดใหม่คงเดิม)'
+    Write-Info "จาก: $oldFull"
+    Write-Info "ไป : $newFull"
+    Write-Host ''
+    $totalMb = 0.0
+    $plan = @()
+    foreach ($p in $phases) {
+        if ($p.Kind -eq 'opt' -and $skipDl) { Write-Info ("  ข้าม   {0}  (--no-downloads)" -f $p.Label); continue }
+        if (-not (Test-Path $p.Src)) { Write-Info ("  ไม่มี   {0}" -f $p.Label); continue }
+        $mb = Get-FolderSizeMB $p.Src
+        $totalMb += $mb
+        $plan += $p
+        Write-Info ("  {0,-56} {1,10:N1} MB" -f $p.Label, $mb)
+    }
+    if ($plan.Count -eq 0) { Write-Info 'ไม่มีอะไรให้ย้าย'; return }
+    Write-Host ''
+    Write-Warn2 'data เดิมของ root นี้ (ถ้ามี) จะย้ายไป data.preimport-<เวลา> ไว้ก่อน — ไม่ถูกลบ'
+    if (-not (Confirm-Action "พิมพ์ y เพื่อเริ่มย้าย $($plan.Count) ขั้น (~$totalMb MB)")) { Write-Info 'ยกเลิก'; return }
+
+    $results = @()
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $i = 0
+    foreach ($p in $plan) {
+        $i++
+        $xargs = @()
+        if ($p.Kind -eq 'cfg') { $xargs = @('/XF', 'php.ini', 'my.ini', 'httpd.conf', '/XD', 'pids', 'tmp') }
+        # data: ย้ายของเดิมออกจากทางก่อน (rename บน volume เดียวกัน = เร็ว ไม่ต้องลบ)
+        if ($p.Kind -eq 'data' -and (Test-Path $p.Dst)) {
+            $kids = @(Get-ChildItem $p.Dst -Force -EA SilentlyContinue)
+            if ($kids.Count -gt 0) {
+                $bak = "$($p.Dst).preimport-$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+                Move-Item -LiteralPath $p.Dst -Destination $bak -Force
+                Write-Warn2 "data เดิมย้ายไป: $bak"
+            }
+        }
+        Write-Info ("  [{0}/{1}] กำลังย้าย: {2}" -f $i, $plan.Count, $p.Label)
+        $r = Copy-StateTree $p.Src $p.Dst $p.Label $i $plan.Count $xargs
+        $results += $r
+        if ($r.Failed -gt 0) { Write-Warn2 ("  {0} — คัดลอกไม่สำเร็จ {1} ไฟล์ (อาจถูกล็อก — ตรวจภายหลัง)" -f $p.Label, $r.Failed) }
+        else { Write-Ok ("  {0} — {1} ไฟล์" -f $p.Label, $r.Copied) }
+    }
+    $sw.Stop()
+
+    # www\app junction ไม่ถูกคัดลอกด้วย /XJ -> สร้างใหม่จาก config ที่เพิ่งย้ายมา
+    try { Sync-AppAliases; Write-Info 'สร้าง junction www\<app> ให้แล้ว (Sync-AppAliases)' }
+    catch { Write-Warn2 "junction: $($_.Exception.Message)" }
+
+    Write-Host ''
+    Write-Head "ย้ายเสร็จ — ใช้เวลา $([int]$sw.Elapsed.TotalSeconds) วินาที"
+    foreach ($r in $results) {
+        Write-Info ("  {0,-56} {1,8} ไฟล์{2}" -f $r.Label, $r.Copied, $(if ($r.Failed -gt 0) { "  [FAIL $($r.Failed)]" } else { '' }))
+    }
+    Write-Host ''
+    Write-Info 'ขั้นถัดไป:'
+    Write-Info '  aptstack list              ดูเวอร์ชัน/แอปที่ย้ายมา'
+    Write-Info '  aptstack doctor            ตรวจความเรียบร้อยทั้งหมด'
+    Write-Info '  aptstack start             เปิดใช้ (php.ini/my.ini/httpd.conf generate ใหม่ — path ชี้ root นี้เอง)'
+    Write-Info '  aptstack service install   ถ้าใช้ Windows service (ต้องทำใหม่ให้ชี้ root นี้)'
+    if ($skipDl) { Write-Info '  ไม่ได้ย้าย downloads (--no-downloads) — โหลดใหม่ด้วย: aptstack add ...' }
+}
+
+function Cmd-Import([string]$file, [string]$dbName, [string]$extra) {
+    # mode โฟลเดอร์: ย้ายทั้ง install เก่า -> root นี้ (ต้องเช็คก่อน — SQL path มีเงื่อนไข db รันอยู่)
+    if ($file) {
+        $probe = $file
+        if ($probe -notmatch '^[A-Za-z]:[\\/]') { $probe = Join-Path $Root $probe }
+        if (Test-Path -LiteralPath $probe -PathType Container) {
+            Cmd-ImportRoot $probe ("$dbName $extra")
+            return
+        }
+    }
     # แบบ db_manager.go (win-devops-toolkit): รับ .sql หรือ .sql.zip
     # - สร้าง database ให้ถ้ายังไม่มี (CREATE DATABASE IF NOT EXISTS)
     # - import ผ่าน stdin file (ไม่ pipe — กันไทยเป็น ???)
@@ -2754,6 +2902,10 @@ function Cmd-Import([string]$file, [string]$dbName) {
         Write-Head 'import — วิธีใช้'
         Write-Info 'aptstack import <file.sql|.sql.zip> [dbname]'
         Write-Info 'aptstack import D:\dump\myapp.sql.zip myapp'
+        Write-Host ''
+        Write-Info 'aptstack import <โฟลเดอร์ aptstack เก่า> [--no-downloads]'
+        Write-Info '   ย้ายทั้ง install เก่า (stack/data/www/versions/config) เข้า root นี้'
+        Write-Info '   โค้ดใหม่คงเดิม · มี progress ทีละขั้น · data เก่าถูกกันไว้ data.preimport-*'
         if ($cand.Count -gt 0) {
             Write-Host ''
             Write-Info 'ไฟล์ .sql/.sql.zip ที่เจอใกล้ ๆ:'
@@ -3523,8 +3675,8 @@ function Cmd-Config([string]$what, [string]$val) {
                 $apache = Resolve-Apache $cfg.apache
                 $php = Resolve-Php $cfg.php
                 if (-not $apache) { Write-Warn2 'ยังไม่มี Apache — ต้อง: aptstack add apache 2.4.69' }
-                elseif (-not (Test-Path (Join-Path $php.Dir 'php8apache2_4.dll'))) {
-                    Write-Warn2 "PHP $($php.Version) เป็น NTS — mod_php ต้อง Thread Safe (aptstack use php 8.3.36)"
+                elseif (-not (Test-PhpApacheMod $php.Dir)) {
+                    Write-Warn2 "PHP $($php.Version) เป็น NTS — mod_php ต้อง Thread Safe (มี php*apache2_4.dll)"
                 } else { Write-Ok "Apache $($apache.Version) + PHP TS $($php.Version) พร้อม" }
                 if ("$($cfg.httpsEnabled)".ToLower() -eq 'true') { Write-Info "HTTPS เปิดอยู่ — restart แล้วใช้ https://127.0.0.1:$($cfg.httpsPort)/" }
             } elseif ($v -eq 'builtin') {
@@ -4357,6 +4509,9 @@ function Cmd-Help {
   aptstack seed                    import database ตัวอย่าง (aptstack_demo)
   aptstack import <file.sql|.sql.zip> [dbname]
                                    import dump เข้า database (สร้าง DB ให้ · ไทยไม่พัง · แบบ db_manager)
+  aptstack import <โฟลเดอร์ aptstack เก่า> [--no-downloads]
+                                   ย้ายทั้ง install เก่า (stack/data/www/versions/config) เข้า root นี้
+                                   — โค้ดใหม่คงเดิม · แสดงสถานะทีละขั้น · data เก่ากันไว้ data.preimport-*
   aptstack logs <apache|mysql|php> ดู log ท้ายไฟล์ (ตัวเลข = กี่บรรทัด, default 50)
   aptstack logs all                ดู log error ทุกตัว
 
@@ -4457,7 +4612,7 @@ switch ($Command.ToLower()) {
     'doctor'      { Cmd-Doctor }
     'backup'      { Cmd-Backup $Action }
     'seed'        { Cmd-Seed }
-    'import'      { Cmd-Import $Action $Value }
+    'import'      { Cmd-Import $Action $Value $Extra }
     'db'          { Cmd-Db $Action $Value $Extra }
     'config'      { Cmd-Config $Action $Value }
     'samples'     { Cmd-Samples }
