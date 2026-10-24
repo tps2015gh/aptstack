@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>aptstack — Debug Report: PHP 7 mod_php vs PHP 8, TS/NTS, MariaDB install</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#30363d;
+    --txt:#e6edf3; --dim:#9da7b3; --acc:#58a6ff; --ok:#3fb950; --bad:#f85149;
+    --warn:#d29922; --code:#0b0f14; --kw:#ff7b72; --str:#a5d6ff; --num:#79c0ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font:15px/1.75 "Segoe UI",Tahoma,Leelawadee UI,sans-serif}
+  .wrap{max-width:1060px;margin:0 auto;padding:34px 22px 80px}
+  h1{font-size:27px;margin:0 0 6px;border-bottom:2px solid var(--line);padding-bottom:14px}
+  h2{font-size:20px;margin:44px 0 12px;color:var(--acc);
+     border-left:4px solid var(--acc);padding-left:10px}
+  h3{font-size:16px;margin:24px 0 8px;color:#c9d1d9}
+  .meta{color:var(--dim);font-size:13px}
+  .meta b{color:var(--txt)}
+  table{border-collapse:collapse;width:100%;margin:12px 0 18px;font-size:13.5px;background:var(--panel)}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#c9d1d9;font-weight:600;white-space:nowrap}
+  td{color:#d7dde4}
+  code,kbd{font-family:Consolas,"Cascadia Mono",monospace;font-size:12.8px}
+  code{background:var(--code);border:1px solid var(--line);border-radius:4px;padding:1px 6px;color:#ffd27d}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:8px;
+      padding:12px 14px;overflow-x:auto;font-size:12.6px;line-height:1.6;
+      font-family:Consolas,"Cascadia Mono",monospace;color:#c9d1d9;margin:10px 0 18px}
+  pre .g{color:var(--ok)} pre .r{color:var(--bad)} pre .y{color:var(--warn)} pre .c{color:#7d8590} pre .b{color:var(--num)}
+  .tag{display:inline-block;font-size:11.5px;font-weight:700;letter-spacing:.4px;
+       border-radius:20px;padding:2px 10px;margin-right:6px;vertical-align:middle}
+  .t-ok{background:#12261a;color:var(--ok);border:1px solid #1f6f3d}
+  .t-bad{background:#2a1215;color:var(--bad);border:1px solid #8b2b30}
+  .t-warn{background:#2b230d;color:var(--warn);border:1px solid #7a5c14}
+  .t-info{background:#0e2238;color:var(--acc);border:1px solid #1f5fa8}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+        padding:16px 18px;margin:14px 0}
+  .card h3{margin-top:0}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:14px 0}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .kpi .n{font-size:23px;font-weight:700;font-family:Consolas,monospace}
+  .kpi .l{color:var(--dim);font-size:12.5px}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} .acc{color:var(--acc)}
+  ul,ol{padding-left:22px} li{margin:5px 0}
+  .hl{background:#3a2c07;border-left:4px solid var(--warn);padding:10px 14px;margin:12px 0;border-radius:0 8px 8px 0}
+  .hl.red{background:#2a1215;border-left-color:var(--bad)}
+  .hl.blue{background:#0e2238;border-left-color:var(--acc)}
+  .foot{margin-top:56px;padding-top:14px;border-top:1px solid var(--line);
+        color:var(--dim);font-size:12.5px}
+  a{color:var(--acc)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>aptstack Debug Report <span class="tag t-info">v1.3.4 → 1.3.5</span></h1>
+<p class="meta">
+  วันที่: <b>25 ต.ค. 2026</b> · เครื่องทดสอบ: <b>C:\NoteBook1\2569-10-23-TryUse-AppStack\aptstack-1.3.4</b><br>
+  โปรเจกต์ต้นทาง: <b>C:\NoteBook1\2569-10-22-create-XAMPP-Laragon-clone\aptstack</b> (VERSION=1.3.5, ยังไม่ build dist)<br>
+  ขอบเขต: PHP TS/NTS detection · MariaDB 10.4.8 install · <b>httpd -t mod_php PHP7 vs PHP8</b> · setup แยก PHP 7/8
+</p>
+
+<div class="grid">
+  <div class="kpi"><div class="n ok">1 แก้แล้ว</div><div class="l">TS/NTS misdetect (php8-only check)</div></div>
+  <div class="kpi"><div class="n warn">1 root cause ชัด</div><div class="l">MariaDB flatten ล็อก/ค้าง + dead-end ติดตั้งซ้ำ</div></div>
+  <div class="kpi"><div class="n bad">1 ยังไม่ปิดเคส</div><div class="l">httpd -t เมิน php7apache2_4.dll</div></div>
+  <div class="kpi"><div class="n acc">1 ยืนยันแล้ว</div><div class="l">setup URL hardcode vs16 (ผิดสำหรับ PHP7)</div></div>
+  <div class="kpi"><div class="n warn">5 ข้อ</div><div class="l">ช่องโหว่/ความเสี่ยงที่ audit เจอ (1 สูง) — §6</div></div>
+</div>
+
+<table>
+<tr><th style="width:34px">#</th><th>ปัญหา</th><th style="width:120px">สถานะ</th><th>Root cause / ข้อสรุป</th></tr>
+<tr><td>1</td><td>TS จริง แต่ aptstack แจ้งเป็น NTS</td><td><span class="tag t-ok">FIXED (source)</span></td>
+<td>โค้ด 1.3.4 เช็คเฉพาะ <code>php8apache2_4.dll</code> → PHP 7.4 TS (มีแต่ <code>php7apache2_4.dll</code>) ถูกตีเป็น NTS → บล็อก mod_php ทั้งที่ใช้ได้</td></tr>
+<tr><td>2</td><td>ติดตั้ง <code>mariadb-10.4.8</code> ค้างกลางคัน</td><td><span class="tag t-warn">รอแก้</span></td>
+<td><code>Expand-AndFlatten</code> ใช้ Move-Item แบบ copy+delete → ไฟล์ถูกล็อกชั่วคราวทำให้ย้ายค้าง → dest ครึ่งๆกลางๆ แล้วรอบถัดไปโดน "มีอยู่แล้ว" จบเห่</td></tr>
+<tr><td>3</td><td><code>httpd -t</code> โหลดโมดูล PHP 7.4 ไม่ผ่าน แต่ PHP 8.3 ผ่าน</td><td><span class="tag t-bad">กำลังสืบ</span></td>
+<td>dll ทั้งสองตัวเป็นของ official จริง โหลดผ่านใน process ธรรมดา แต่<b>ล้มเหลวเฉพาะใน httpd.exe</b> — ยังไม่ระบุกลไกที่แน่ชัด (ดู §4)</td></tr>
+<tr><td>4</td><td>setup/URL ไม่แยก PHP7 กับ PHP8</td><td><span class="tag t-warn">รอแก้</span></td>
+<td><code>Get-OfficialUrls</code> hardcode <code>Win32-vs16-x64</code> (ชื่อไฟล์ยุค PHP 8) — PHP 7.4 ของจริงคือ <code>Win32-vc15-x64</code> → <code>add php 7.4.33</code> โหลดอัตโนมัติไม่ได้</td></tr>
+<tr><td>5</td><td>ช่องโหว่/ความเสี่ยงใน stack (audit)</td><td><span class="tag t-warn">ดู §6</span></td>
+<td>PHP EOL 2 ตัว (active = 8.1.25), MariaDB 10.4.8 ระดับ patch ปี 2019, phpMyAdmin config-auth root/root เปิดถึง LAN ได้จาก <code>Listen 8077</code></td></tr>
+</table>
+
+<h2>1. Apache ที่ใช้โฟกัส</h2>
+<div class="card">
+<pre>stack\apache\httpd-2.4.69\Apache24\bin\httpd.exe
+  FileVersion  : <span class="b">2.4.69</span>
+  ProductName  : Apache HTTP Server
+  รายละเอียด log : Apache Lounge <span class="y">VS18</span> Server built: Oct 1 2026 — Win64, OpenSSL/3.5.9
+  โครงสร้าง      : httpd.exe + libhttpd.dll + libapr-1.dll + libaprutil-1.dll (อยู่ใน bin\)
+  คอนฟิก        : config\httpd.conf  (LoadModule php_module ที่ <span class="r">บรรทัด 37</span>)</pre>
+<p>การทดสอบทั้งหมดใน §4 ใช้ตัวนี้ตัวเดียวกันทุกครั้ง — ไม่มีการสลับ Apache อื่นเข้ามาเกี่ยว</p>
+</div>
+
+<h2>2. ปัญหา TS/NTS — ปิดเคสแล้ว</h2>
+<div class="card">
+<h3>อาการ</h3>
+<pre>.\aptstack.cmd add php ..\php-7.4.33-Win32-vc15-x64.zip
+[OK]  ติดตั้ง PHP 7.4.33 เรียบร้อย
+      <span class="r">NTS build — ใช้ได้กับ PHP built-in server ของ aptstack เท่านั้น</span>   <span class="c">← ทั้งที่ไฟล์เป็น TS</span></pre>
+
+<h3>Root cause</h3>
+<p>เทียบไบต์ต่อไบต์ระหว่าง <code>dist\aptstack-1.3.4.zip</code> (ที่รันจริง) กับ working copy:</p>
+<pre><span class="c">// dist 1.3.4 (ของเดิม) — เช็ค "php8..." เท่านั้น ทุกจุด</span>
+225:  ApacheMod = (Test-Path (Join-Path $d.FullName '<span class="r">php8apache2_4.dll</span>'))
+924:  if (-not (Test-Path (Join-Path $php.Dir '<span class="r">php8apache2_4.dll</span>'))) { ... "เป็น NTS" ... }
+
+<span class="c">// working copy / dist ที่แก้แล้ว (1.3.5)</span>
+212:  $hit = @(Get-ChildItem -Path $Dir -Filter '<span class="g">php*apache2_4.dll</span>' -File ...)
+      <span class="c"># PHP 8 = php8apache2_4.dll · PHP 7 = php7apache2_4.dll · PHP 5 = php5apache2_4.dll</span></pre>
+<p>สัญลักษณ์ mod_php ของ PHP 7 คือ <code>php7apache2_4.dll</code> — โค้ดเดิมมองไม่เห็น → สรุปผิดว่า NTS ทันที</p>
+
+<h3>หลักฐานสนับสนุน</h3>
+<table>
+<tr><th>รายการ</th><th>ผล</th></tr>
+<tr><td><code>php-7.4.33-ts-Win32-vc15-x64.zip</code> (user rename)</td><td class="ok">มี php7apache2_4.dll ✓</td></tr>
+<tr><td><code>php-7.4.33-nts-Win32-vc15-x64.zip</code></td><td class="bad">ไม่มี apache dll ✓ (NTS จริง)</td></tr>
+<tr><td><code>stack\php\7.4.33\php7apache2_4.dll</code> SHA256</td><td class="ok">ตรงกับ official windows.php.net ทุกไบต์</td></tr>
+<tr><td><code>php -v</code></td><td class="ok"><code>ZTS Visual C++ 2017 x64</code> — TS จริง</td></tr>
+</table>
+
+<h3>ข้อควรรู้</h3>
+<ul>
+  <li>การตัดสิน TS/NTS ของ aptstack ใช้<b>เนื้อไฟล์</b> (มี <code>php*apache2_4.dll</code> ไหม) ซึ่งเชื่อถือได้กว่าชื่อไฟล์ — ชื่อ zip อย่าง <code>php-7.4.33-Win32-vc15-x64.zip</code> ของ windows.php.net "ไม่มี nts = TS" จริง แต่ถ้าไฟล์ถูก rename มา ก็ชื่อไม่บอกอะไร</li>
+  <li>ไฟล์ที่แก้แล้วอยู่ที่ working copy + test copy (identical, MD5 9B79AC42...262062 bytes) — <b><code>dist\aptstack-1.3.5.zip</b></code> ยังเป็นโค้ดเก่า (php8-only) อยู่ ต้อง build ใหม่ก่อนแจก</li>
+</ul>
+</div>
+
+<h2>3. ปัญหา MariaDB 10.4.8 ติดตั้งค้าง</h2>
+<div class="card">
+<h3>เหตุการณ์</h3>
+<pre>ดาวน์โหลด https://archive.mariadb.org/mariadb-10.4.8/winx64-packages/mariadb-10.4.8-winx64.zip
+[OK] บันทึกไว้: ...\downloads\mariadb-10.4.8-winx64.zip
+ติดตั้ง MySQL/MariaDB -> stack\mysql\10.4.8
+<span class="r">Move-Item : Cannot remove item ...\stack\mysql\10.4.8\mariadb-10.4.8-winx64\share\russian:
+            The process cannot access the file ... because it is being used by another process.</span>
+  At aptstack.ps1:1411  Get-ChildItem $inner -Force | Move-Item -Destination $dest -Force</pre>
+
+<h3>กลไกที่พัง (Expand-AndFlatten)</h3>
+<pre>Expand-Archive zip -> dest
+  dest = { mariadb-10.4.8-winx64 }          <span class="c"># inner folder เดียว</span>
+  flatten: ย้ายลูก inner ขึ้น dest ทีละตัว
+    Move-Item ถ้าชน/ล็อก → Windows แก้ด้วย <span class="y">copy แล้วค่อยลบ source</span>
+    ลบ source ติดล็อกที่ share\russian       <span class="c"># ล็อกชั่วคราว (AV/scan) </span>
+    → pipeline หยุดกลางทาง → dest ครึ่งๆกลางๆ</pre>
+
+<h3>สภาพที่ค้างอยู่จริง (inspection)</h3>
+<pre>stack\mysql\10.4.8\
+├─ bin\  data\  include\  lib\  share\        <span class="g"># ย้ายขึ้นมาได้บางส่วน (share ไม่สมบูรณ์)</span>
+└─ mariadb-10.4.8-winx64\                    <span class="r"># inner เหลือค้าง</span>
+   └─ share\, COPYING, CREDITS, README.md ... <span class="r"># ย้ายไม่หมดเพราะค้างที่ share\russian</span>
+─ .aptstack-source   <span class="r"># ไม่มี → Set-SourceMeta (ขั้นสุดท้าย) ยังไม่ถูกเรียก = ติดตั้งไม่เสร็จ</span>
+─ bin\mysqld.exe     <span class="g"># มี (ย้ายก่อน)</span>  แต่ share\errmsg.sys ยังไม่มี</pre>
+
+<div class="hl red"><b>Dead-end ที่สอง:</b> รอบถัดไปของ <code>add mysql 10.4.8</code> เจอ <code>Test-Path $dest</code> → ตอบ "มีอยู่แล้ว" แล้วจบ — ผู้ใช้ซ่อมเองไม่ได้ด้วยคำสั่ง add (ต้อง <code>rm mysql 10.4.8</code> ก่อน ถึงจะ add ใหม่ได้)</div>
+
+<h3>งานที่ต้องแก้ (backlog)</h3>
+<ol>
+  <li><code>Expand-AndFlatten</code> — แตกไฟล์ลง temp แล้ว flatten ใน temp (ไม่ชนของเดิม) + retry/robocopy fallback รายไฟล์ + ข้อความไทยบอกชื่อไฟล์ที่ล็อกชัดเจน ห้ามค้าง dest ครึ่งๆกลางๆ</li>
+  <li>ทางซ่อม — ถ้า dest มีอยู่แต่<b>ยังไม่จบ</b> (ไม่มี <code>.aptstack-source</code>) → ให้ re-add ทับได้ (แจ้งเตือนก่อน) แทนคำว่า "มีอยู่แล้ว"</li>
+  <li>Alias — <code>aptstack add mariadb &lt;ver&gt;</code> = mysql (ตอนนี้ <code>Normalize-PmaKind</code> รับแค่ pma/phpmyadmin)</li>
+  <li>เมนู interactive — เพิ่มหัวข้อ <code>[MariaDB]</code> ใน <code>Select-Interactive</code> (ตอนนี้มีแค่ [แอป] กับ [PHP]) เลือกแล้วเรียก <code>Switch-MySql</code> เหมือน PHP</li>
+</ol>
+<div class="hl blue">หมายเหตุ: ดาวน์โหลด URL ของ mariadb <b>ทำงานถูกต้องแล้ว</b> (<code>Get-OfficialUrls mysql</code> → archive.mariadb.org) — ที่พังคือขั้น extract/flatten ไม่ใช่ขั้นโหลด</div>
+</div>
+
+<h2>4. เคสใหญ่: httpd -t เมิน PHP 7.4 แต่ยอม PHP 8.3</h2>
+
+<div class="hl red"><b>อาการหลัก (ทำซ้ำได้ 100%):</b>
+<pre style="margin:8px 0 0;border:none;background:transparent;padding:0">httpd.exe: Syntax error on line 37 of .../config/httpd.conf:
+  Can't locate API module structure `php_module' in file
+  .../stack/php/7.4.33/php7apache2_4.dll: <span class="r">No error</span>      exit=1
+
+vs. ชี้ LoadModule ไปที่ php8apache2_4.dll (8.3.36) → <span class="g">Syntax OK  exit=0</span></pre></div>
+
+<h3>4.1 ตารางทดสอบ (matrix)</h3>
+<table>
+<tr><th>#</th><th>เงื่อนไข</th><th>httpd -t</th><th>LoadLibrary<br>(process ธรรมดา)</th></tr>
+<tr><td>A</td><td>conf 7.4 + PATH ปกติ (ไม่ prepend)</td><td class="bad">FAIL 1</td><td class="bad">FAIL 126 (php7ts หาไม่เจอ — ปกติ)</td></tr>
+<tr><td>B</td><td>conf 7.4 + PATH มีโฟลเดอร์ PHP</td><td class="bad">FAIL 1</td><td>—</td></tr>
+<tr><td>C</td><td>conf 7.4 + PATH มี <b>PHP dir + Apache bin</b></td><td class="bad">FAIL 1</td><td class="ok"><b>PASS</b> handle≠0, err=0</td></tr>
+<tr><td>D</td><td>conf 7.4 + PATH มี Apache bin อย่างเดียว</td><td class="bad">FAIL 1</td><td>—</td></tr>
+<tr><td>E</td><td>conf <b>ชี้ 8.3.36</b> + PATH มี PHP8 dir + bin</td><td class="ok"><b>Syntax OK</b></td><td class="ok">PASS</td></tr>
+<tr><td>T3</td><td>conf 7.4 ทำ round-trip re-encode (ค่าเท่ากับ E ทุกอย่าง ยกเว้น dll)</td><td class="bad">FAIL 1</td><td class="ok">PASS</td></tr>
+</table>
+<p><b>ใจความ:</b> process ธรรมดากับ PATH ชุดเดียวกัน → โหลด <code>php7apache2_4.dll</code> สำเร็จ แต่ <code>httpd.exe</code> ล้มเหลว — ความต่างอยู่ที่<b>ตัว process httpd เท่านั้น</b> และ<b>เจาะจงที่ PHP 7.4 เท่านั้น</b></p>
+
+<h3>4.2 สมมุติฐานที่ตัดทิ้งแล้ว (พร้อมหลักฐาน)</h3>
+<table>
+<tr><th>สมมุติฐาน</th><th>ผล</th><th>หลักฐาน</th></tr>
+<tr><td>ไฟล์เสีย / แตกไม่ครบ</td><td class="ok">ตัดทิ้ง</td>
+<td>SHA256 ของ <code>php7apache2_4.dll</code> = <code>6241A38C…B0D288</code> และ <code>php7ts.dll</code> = <code>5D46E026…E3E14</code> <b>ตรงกับ official zip ที่เพิ่งโหลดจาก windows.php.net ทุกไบต์</b></td></tr>
+<tr><td>สถาปัตยกรรมผิด (x86/x64)</td><td class="ok">ตัดทิ้ง</td><td>PE machine = 0x8664 ทุกไฟล์ (php.exe, php7apache2_4, php7ts, httpd Win64)</td></tr>
+<tr><td>โดน MOTW/บล็อกไฟล์</td><td class="ok">ตัดทิ้ง</td><td>ไม่มี ADS <code>Zone.Identifier</code> เหลืออยู่</td></tr>
+<tr><td>path ใน conf มีอักขระมองไม่เห็น</td><td class="ok">ตัดทิ้ง</td><td>hex dump บรรทัด 37 = ASCII ล้วน + <code>Test-Path -LiteralPath</code> = True + ชื่อไดเรกทอรี = <code>0037 002E 0034 002E 0033 0033</code></td></tr>
+<tr><td>encoding/ภาษาไทยใน conf เพี้ยน</td><td class="ok">ตัดทิ้ง</td><td>conf ต้นฉบับกับ round-trip (UTF8+BOM) ให้ผลเดียวกัน (T3); บรรทัด 36 เป็น comment ไทยปกติ</td></tr>
+<tr><td>export <code>php_module</code> หาย</td><td class="ok">ตัดทิ้ง</td><td>มีใน dll + เป็นไฟล์ official + ข้อความผิดเป็นฝั่ง "โหลด" ไม่ใช่ฝั่ง "symbol"</td></tr>
+<tr><td>PATH ไม่พอ / หา dependency ไม่เจอ</td><td class="ok">ตัดทิ้งบางส่วน</td>
+<td>PATH = PHP dir + bin แล้ว httpd ยัง fail; แต่ process ธรรมดา load สำเร็จด้วย PATH ชุดเดียวกัน</td></tr>
+<tr><td>dll คนละตัวกับที่ test (ไฟล์ถูกสลับระหว่างทดสอบ)</td><td class="ok">ตัดทิ้ง</td><td>โหลด official มาเทียบทีหลัง — match=True ทั้งสองไฟล์</td></tr>
+<tr><td>Signed-module policy / CIG</td><td class="ok">ตัดทิ้ง</td><td>php7/php8 dll = unsigned ทั้งคู่ (สถานะ Authenticode = NotSigned เหมือนกัน) → ถ้า policy บล็อก ต้องบล็อกทั้งคู่</td></tr>
+</table>
+
+<h3>4.3 ข้อเท็จจริงที่เหลืออยู่ (สนใจ technical สุด)</h3>
+<ul>
+  <li><b>dlerror = "No error"</b> — ข้อความนี้แปลว่า LoadLibrary คืน NULL โดยที่ GetLastError() = 0 ซึ่งเกิดได้ในเคส <b>DllMain คืน FALSE</b> (CRT/loader init ล้มเหลวใน process นั้นๆ) ต่างจาก dependency หายซึ่งจะได้ error 126 "The specified module could not be found"</li>
+  <li><b>php7ts.dll vs php8ts.dll</b> — import แทบจะเหมือนกันทุกประการ ต่างที่ php7ts มี <code>imagehlp.dll</code> เพิ่ม (System32 — ไม่น่าใช่ปัญหา) และ php7 สร้างด้วย <b>VC15/VS2017</b> (filename vc15) ส่วน php8.3 = vs16 — คนละ toolset</li>
+  <li>dll ทั้งคู่ import <code>libapr-1 / libaprutil-1 / libhttpd / VCRUNTIME140 / api-ms-win-crt-*</code> — ตัว httpd (Apache Lounge VS18, built ต.ค. 2026) ใหม่กว่า PHP 7.4.33 (built พ.ย. 2022) ราว 4 ปี</li>
+  <li>log <code>apache-error.log</code> จาก run ก่อนหน้ามีบรรทัด <code>VirtualProtect() failed [87] The parameter is incorrect</code> 2 ครั้ง ก่อน server จะยุติ — เป็นอาการคนละ run แต่คุ้มค่าต้องสอบต่อ (เกี่ยวกับการตั้งหน้าความจำของ mod_php/TS)</li>
+</ul>
+
+<h3>4.4 แนวทางปิดเคส (ขั้นถัดไป)</h3>
+<ol>
+  <li><b>ETW loader trace</b> — <code>logman</code> เปิด provider Microsoft-Windows-Kernel-Process (Image/Thread keywords) แล้ว <code>tracerpt</code> แปลง ETL → CSV เทียบรูป image ที่ถูกโหลด/ล้มเหลว ระหว่าง run 7.4 กับ 8.3 จะเห็นชื่อ dll ตัวสุดท้ายที่แตะก่อนพัง</li>
+  <li><b>ProcMon</b> — filter Process = httpd.exe + Path contains php7 → อ่านผล Load Image/NAME NOT FOUND แบบ raw</li>
+  <li>test แยกโฟลเดอร์: copy <code>php7apache2_4.dll + php7ts.dll</code> ลงไดเรกทอรีสะอาดชี้ conf ไป — ถ้าผ่านแปลว่าไฟล์อื่นใน <code>stack\php\7.4.33</code> แทรกแซง; ถ้า fail คือ interaction ระหว่าง httpd VS18 กับ VC15 ล้วนๆ</li>
+  <li>ถ้ายังไม่ตาย: แตก official zip ใหม่ทั้งโฟลเดอร์ <code>7.4.33</code> (กันเศษไฟล์ NTS ที่เคย merge ค้าง)</li>
+</ol>
+</div>
+
+<h2>5. "แยก PHP 7 กับ PHP 8 ใน setup" — คุณคิดถูก แต่แค่บางส่วน</h2>
+<div class="card">
+<table>
+<tr><th>ส่วน</th><th>ต้องแยกไหม?</th><th>เหตุผล</th></tr>
+<tr><td>ชื่อไฟล์โหลดอัตโนมัติ (Get-OfficialUrls / setup.ps1)</td>
+<td class="bad"><b>ต้องแยก — บั๊กจริง</b></td>
+<td><code>aptstack.ps1:1448</code> hardcode <code>$base = "php-$ver-Win32-vs16-x64.zip"</code> → PHP 7.x ของจริงชื่อ <code>php-7.4.33-Win32-vc15-x64.zip</code> (vc15 ไม่ใช่ vs16) → <code>add php 7.4.33</code> พิมพ์ URL ผิด/โหลดไม่ได้ ส่วน <code>setup.ps1:82</code> บอก "vs17" อีกแบบ</td></tr>
+<tr><td>LoadModule ใน httpd.conf</td><td class="ok">ไม่ต้องแยก</td>
+<td><code>New-HttpdConf</code> ใส่ชื่อ dll ตามไดเรกทอรี PHP ที่ active อยู่แล้ว (หลักฐาน: conf บรรทัด 37 = <code>php7apache2_4.dll</code> ถูกต้องเมื่อ active = 7.4.33) และ symbol <code>php_module</code> ใช้ร่วมกันทั้ง 7/8</td></tr>
+<tr><td>การตรวจ TS/NTS</td><td class="ok">ไม่ต้องแยก</td><td>ใช้ <code>php*apache2_4.dll</code> ร่วมกันได้ (หลังแก้ §2)</td></tr>
+<tr><td>Redistributable ที่ต้องแจ้งเตือน</td><td class="warn">ควรแยกข้อความ</td><td>PHP 7.4 = VC++2017 (VC15) · PHP 8.0–8.3 = VS2019 (VS16) — ตัว runtime ต่างกัน ควร warn ตอน add</td></tr>
+</table>
+<pre><span class="c"># แผนแก้ Get-OfficialUrls (php) — แปลง tag จากเลขเวอร์ชัน</span>
+ver &gt;= 8.0  →  php-{ver}-Win32-vs16-x64.zip
+ver 7.2–7.4 →  php-{ver}-Win32-vc15-x64.zip
+ver 7.0–7.1 →  php-{ver}-Win32-vc14-x64.zip   <span class="c">(ถ้าจะรองรับ)</span></pre>
+</div>
+
+<h2>6. ช่องโหว่/ความเสี่ยงที่ตรวจพบ (audit จากของจริงใน stack + โค้ด aptstack)</h2>
+<div class="card">
+<p class="meta">ขอบเขต: สิ่งที่ "เจอเอง" จากการ inspect ไฟล์/คอนฟิก/โค้ดในเครื่องนี้ + รายการ CVE สาธารณะที่ทราบที่ฐานความรู้ของโมเดล — ตรวจสอบล่าสุดเท่าที่ครอบคลุม
+ควรยืนยันซ้ำกับ <a href="https://nvd.nist.gov/">NVD</a> · <a href="https://www.php.net/manual/en/security.php">PHP security</a> · <a href="https://httpd.apache.org/security_report.html">Apache advisories</a> เสมอ</p>
+
+<h3>6.1 ของเก่าใน stack (ควรรู้ก่อนใช้ทดสอบ)</h3>
+<table>
+<tr><th>รายการ</th><th style="width:80px">ความเสี่ยง</th><th>รายละเอียด</th></tr>
+<tr><td><b>PHP 7.4.33</b></td><td><span class="tag t-bad">สูง (อายุ)</span></td>
+<td><b>EOL 28 พ.ย. 2022</b> — ไม่มี patch ความปลอดภัยอีกเลย ~4 ปี และ<b>เคยเป็น active</b>ของสแตก (เมนูขึ้น &lt;- ใช้อยู่) → ใช้เทสต์บนเครื่องตัวเองเท่านั้น (aptstack เตือน EOL แล้ว แต่ยังรันได้)</td></tr>
+<tr><td><b>PHP 8.1.25</b></td><td><span class="tag t-bad">สูง (อายุ+patch)</span></td>
+<td><b>EOL 31 ธ.ค. 2025</b> และเป็นระดับก่อน 8.1.28 → <b>CVE-2024-4577</b> (Windows PHP-CGI argument injection, CVSS 9.8, mid-2024) ไม่ได้รับ patch ใน 8.1.25 · <i>ข้อจำกัด:</i> ช่องโหว่นี้ exploiting ผ่าน <code>php-cgi.exe</code> + locale Best-Fit ซึ่ง aptstack ไม่ได้ใช้โหมด CGI (ใช้ built-in + mod_php) → ความเสี่ยงจริงในสแต็กนี้<b>ต่ำกว่าปกติ</b> แต่ EOL ทำให้ช่องโหว่ใหม่จะไม่มีวันถูกอุด · <b><code>stack.json</code> กำลังตั้ง <code>"php": "8.1.25"</code> อยู่</b></td></tr>
+<tr><td><b>MariaDB 10.4.8</b></td><td><span class="tag t-warn">กลาง–สูง</span></td>
+<td>ระดับ patch ปี <b>2019</b>; สาขา 10.4 <b>EOL ก.พ. 2024</b> → ค้าง patch หลายรายการ · ข้อจำกัด: bind <code>127.0.0.1:3307</code> → โดนจากนอกเครื่องยาก · ควรย้ายไป <b>10.11/11.4 LTS</b></td></tr>
+<tr><td>Apache <b>httpd 2.4.69</b></td><td><span class="tag t-ok">ต่ำ</span></td>
+<td>รุ่นปัจจุบันของ Apache Lounge (built ต.ค. 2026) — จากที่ทราบไม่มี CVE สาธารณะที่กระทบ 2.4.69 โดยตรง (ชุดใหญ่ CVE-2024-3847x / h2 DoS / SSRF ปิดแล้วในสาย 2.4.59–2.4.64) — <i>ยืนยันซ้ำกับ httpd security report</i> · หมายเหตุ: ไบนารี Apache Lounge ไม่มีลายเซ็น Authenticode (ปกติของที่นี่ แต่เป็นจุด supply-chain ที่ต้องวางใจแหล่งโหลด)</td></tr>
+<tr><td>PHP <b>8.2.35 / 8.3.36</b></td><td><span class="tag t-ok">ต่ำ</span></td>
+<td>ยังได้รับ support (8.2 หมด security support 31 ธ.ค. 2026 — เริ่มใกล้ EOL; 8.3 ยังเหลืออีกปี) — <b>เป็นตัวที่แนะนำ</b> แทน 7.4/8.1</td></tr>
+</table>
+
+<h3>6.2 เจอเองจากโค้ด/คอนฟิก aptstack (code review ระหว่าง debug)</h3>
+<table>
+<tr><th style="width:38px">#</th><th style="width:74px">ระดับ</th><th>พบ</th><th>รายละเอียด / แนะนำ</th></tr>
+<tr><td>V1</td><td><span class="tag t-bad">สูง</span></td><td><b>phpMyAdmin config-auth + root/root เปิดจาก LAN ได้</b></td>
+<td><code>Write-PmaConfig</code> สร้าง <code>config.inc.php</code> เป็น <code>auth_type='config'</code> (user <code>root</code>/pass จาก stack.json = <code>root</code>) <b>ไม่มีหน้าล็อกอิน</b> ขณะที่ <code>Listen 8077</code> (ไม่ระบุ IP → รับทุก interface) + <code>Require all granted</code> — ใครใน LAN ที่ถึง port 8077 เปิด <code>/phpmyadmin/</code> <b>เข้าเป็น root ทันที</b> · <i>แก้:</i> เพิ่ม <code>Require local</code> สำหรับ /phpmyadmin หรือ <code>Listen 127.0.0.1:8077</code> หรือบังคับ <code>auth_type='cookie'</code></td></tr>
+<tr><td>V2</td><td><span class="tag t-warn">กลาง</span></td><td><b>ไม่มี integrity check ไฟล์ที่ดาวน์โหลด</b></td>
+<td><code>add</code> รับ URL อะไรก็ได้แล้วแตกเลย — ไม่เทียบ SHA256 กับค่าอ้างอิง (ทั้งที่ตัว dist ของ aptstack เองมี <code>.sha256</code>) · <i>แก้:</i> pin hash ของ official หรืออย่างน้อยโชว์ hash หลังดาวน์โหลดให้ user เทียบ</td></tr>
+<tr><td>V3</td><td><span class="tag t-warn">กลาง</span></td><td><b>creds เริ่มต้น root/root + dbAdmin auto</b></td>
+<td>ผูก <code>127.0.0.1:3307</code> (ดี) แต่รหัสผ่าน default ง่ายมาก และ <code>dbAdmin auto</code> ให้ phpMyAdmin แชร์ creds เดียวกัน · <i>แก้:</i> สุ่มรหัสผ่านตอน setup แล้วบันทึกให้เห็นชัด</td></tr>
+<tr><td>V4</td><td><span class="tag t-info">ต่ำ</span></td><td><code>Expand-AndFlatten</code> ใช้ <code>Expand-Archive</code> ตรงๆ</td>
+<td>พึ่งพาการกัน path traversal ของ PowerShell — ควร validate รายชื่อ entry ใน zip ว่าไม่มี <code>..</code>/พาธเด็ดขาดก่อนแตก (zip-slip defense-in-depth) — <b>ยังไม่พบ exploitable ในไฟล์ที่ใช้จริง</b> เป็น hardening</td></tr>
+<tr><td>V5</td><td><span class="tag t-info">ต่ำ</span></td><td>config/session files อยู่ใน <code>config\sessions\</code></td>
+<td>ตอนนี้ปลอดภัยเพราะ httpd.conf มี <code>RedirectMatch 404 ^/(config|stack|...)</code> กันไว้แล้ว — เพียงแต่ตำแหน่งนี้ "ต้องไม่โดนยกเลิก" เมื่อแก้ template</td></tr>
+</table>
+
+<h3>6.3 สิ่งที่ตรวจแล้วดี (ไม่พบรอบโหว่)</h3>
+<ul>
+  <li><code>Options -Indexes</code> ปิด directory listing ✓</li>
+  <li><code>RedirectMatch 404 ^/(config|stack|versions|data|logs|templates|bin)(/|$)</code> กันโฟลเดอร์ระบบจากเว็บ ✓</li>
+  <li><code>FilesMatch</code> ปฏิเสธ <code>.bak/.ini/.log/.sql/.pem/.key/...</code> ✓ (รวม <code>config.inc.php</code> ของ phpMyAdmin ด้วย <code>.inc</code>)</li>
+  <li><code>/server-status</code> = <code>Require local</code> ✓ · Header <code>nosniff</code> + <code>SAMEORIGIN</code> ✓ · MariaDB bind <code>127.0.0.1</code> ✓</li>
+</ul>
+</div>
+
+<h2>7. Backlog ที่ยังค้างอยู่</h2>
+<table>
+<tr><th>งาน</th><th>ปัญหาอ้างอิง</th><th>สถานะ</th></tr>
+<tr><td>แก้ <code>Expand-AndFlatten</code> (temp + retry + fallback) และลบ dead-end "มีอยู่แล้ว"</td><td>§3</td><td>ยังไม่เริ่ม</td></tr>
+<tr><td>alias <code>mariadb</code> ใน add/use/rm</td><td>§3</td><td>ยังไม่เริ่ม</td></tr>
+<tr><td>เมนูเลือกเวอร์ชันเพิ่มหัวข้อ [MariaDB] (ใช้ <code>Switch-MySql</code>)</td><td>§3</td><td>ยังไม่เริ่ม</td></tr>
+<tr><td>build <code>dist\aptstack-1.3.5.zip</code> ใหม่ (ของเดิมยังเป็นโค้ด php8-only)</td><td>§2</td><td>ยังไม่เริ่ม</td></tr>
+<tr><td>ETW/ProcMon สืบเคส httpd + PHP7</td><td>§4.4</td><td>ยังไม่เริ่ม</td></tr>
+<tr><td>แยก tag ชื่อไฟล์ PHP 7 (vc15) vs 8 (vs16) ใน Get-OfficialUrls/setup</td><td>§5</td><td>ยังไม่เริ่ม</td></tr>
+<tr><td><b>ปิด V1</b> (phpMyAdmin Require local / bind loopback)</td><td>§6.2</td><td><span class="tag t-bad">ยังไม่เริ่ม — ควรทำก่อน</span></td></tr>
+</table>
+
+<div class="foot">
+  รายงานสรุปจาก session debug — aptstack 1.3.4 (test copy) / 1.3.5 (source)<br>
+  คำสั่ง/หลักฐานสำคัญ: SHA256 เทียบ official zip · LoadLibraryExW P/Invoke · PE import/machine parse · A/B httpd -t · hex dump conf · Authenticode check
+</div>
+
+</div>
+</body>
+</html>
