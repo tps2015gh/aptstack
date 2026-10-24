@@ -1484,9 +1484,61 @@ function Get-SourceMeta($destDir) {
     return $null
 }
 
+function Normalize-PmaKind([string]$k) {
+    $k = "$k".ToLower()
+    if ($k -in @('pma', 'phpmyadmin', 'phpmyadmin')) { return 'pma' }
+    return $k
+}
+
+function Write-PmaConfig([string]$PmaDir) {
+    # generate www\phpmyadmin\config.inc.php จาก stack.json (host/port/user/pass)
+    if (-not $PmaDir -or -not (Test-Path $PmaDir)) { return $false }
+    $cfg = Get-Config
+    $secret = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 32 | ForEach-Object { [char]$_ })
+    $pmaCfg = @"
+<?php
+/* aptstack phpMyAdmin config — generate จาก config\stack.json (aptstack db set-root / add-user) */
+`$cfg['blowfish_secret'] = '$secret';
+`$i = 0;
+`$i++;
+`$cfg['Servers'][`$i]['host'] = '127.0.0.1';
+`$cfg['Servers'][`$i]['port'] = '$($cfg.dbPort)';
+`$cfg['Servers'][`$i]['auth_type'] = 'config';
+`$cfg['Servers'][`$i]['user'] = '$($cfg.dbUser)';
+`$cfg['Servers'][`$i]['password'] = '$($cfg.dbPass)';
+`$cfg['Servers'][`$i]['compress'] = false;
+`$cfg['Servers'][`$i]['AllowNoPassword'] = false;
+`$cfg['UploadDir'] = '';
+`$cfg['SaveDir'] = '';
+`$cfg['CheckConfigurationPermissions'] = false;
+"@
+    Write-Utf8NoBom (Join-Path $PmaDir 'config.inc.php') ($pmaCfg + "`r`n")
+    return $true
+}
+
+function Get-PmaInfo {
+    $pma = Join-Path $Script:P.Www 'phpmyadmin'
+    if (-not (Test-Path (Join-Path $pma 'index.php'))) { return $null }
+    $ver = $null
+    foreach ($f in @('README', 'VERSION')) {
+        $p = Join-Path $pma $f
+        if (Test-Path $p) {
+            $t = Get-Content $p -Raw -EA SilentlyContinue
+            if ($t -match 'Version\s+(\d+\.\d+\.\d+)') { $ver = $Matches[1]; break }
+        }
+    }
+    return [pscustomobject]@{
+        Dir     = $pma
+        Version = $ver
+        Url     = "http://127.0.0.1:$((Get-Config).httpPort)/phpmyadmin/"
+        Config  = (Join-Path $pma 'config.inc.php')
+    }
+}
+
 function Cmd-Add($kind, $source, $extra) {
+    $kind = Normalize-PmaKind $kind
     if (-not $kind -or -not $source) {
-        throw 'ใช้: aptstack add <app|php|mysql|apache|pma> <path|url|version> [name]   (เช่น: aptstack add php 8.3.36)'
+        throw 'ใช้: aptstack add <app|php|mysql|apache|phpmyadmin> <path|url|version> [name]   (เช่น: aptstack add php 8.3.36 หรือ aptstack add phpmyadmin latest)'
     }
     Ensure-Dirs
 
@@ -1636,9 +1688,11 @@ function Cmd-Add($kind, $source, $extra) {
             Write-Utf8NoBom (Join-Path $dest 'config.inc.php') ($pmaCfg + "`r`n")
             Set-SourceMeta $dest $kind $origSource
             Write-Ok "ติดตั้ง phpMyAdmin $name แล้ว"
-            Write-Info "เปิด: http://127.0.0.1:$($cfg.httpPort)/phpmyadmin/"
-            Write-Info 'เปลี่ยนเวอร์ชัน: aptstack add pma 5.2.1  (ของเดิมจะถูก backup)'
-            Write-Info 'ดูรายการ: aptstack list --available pma'
+            Write-Info "path : $dest"
+            Write-Info "URL  : http://127.0.0.1:$($cfg.httpPort)/phpmyadmin/"
+            Write-Info 'เปลี่ยนเวอร์ชัน: aptstack add phpmyadmin 5.2.1  (ของเดิม backup ให้)'
+            Write-Info 'ดูเวอร์ชันที่โหลดได้: aptstack list --available phpmyadmin'
+            Write-Info 'ตั้งรหัส root / เพิ่ม user: aptstack db set-root <pass> | aptstack db add-user <user> <pass>'
         }
         default { throw "ไม่รู้จักชนิด: $kind (ใช้ app | php | mysql | apache | pma)" }
     }
@@ -1719,8 +1773,9 @@ function Cmd-List {
 function Cmd-ListAvailable([string]$kind) {
     $kind = ("$kind".ToLower() -replace '^\-\-?', '')
     if (-not $kind) { $kind = 'all' }
+    $kind = Normalize-PmaKind $kind
     if (@('all', 'php', 'mysql', 'apache', 'pma') -notcontains $kind) {
-        throw "ไม่รู้จัก '$kind' — ใช้: aptstack list --available [php|mysql|apache|pma]"
+        throw "ไม่รู้จัก '$kind' — ใช้: aptstack list --available [php|mysql|apache|phpmyadmin]"
     }
 
     if ($kind -eq 'all' -or $kind -eq 'php') {
@@ -1836,8 +1891,8 @@ function Cmd-ListAvailable([string]$kind) {
                 $mark = if ($curPma -eq $v) { '   * ใช้อยู่' } else { '' }
                 Write-Host ("   {0,-9} {1}" -f $v, $mark) -ForegroundColor Gray
             }
-            Write-Info "ติดตั้ง: aptstack add pma <ver|latest|url|zip>"
-            Write-Info 'เปิดใช้: http://127.0.0.1:<httpPort>/phpmyadmin/'
+            Write-Info "ติดตั้ง: aptstack add phpmyadmin <ver|latest|url|zip>"
+            Write-Info 'path จริง: www\phpmyadmin\  · URL: http://127.0.0.1:<httpPort>/phpmyadmin/'
         }
     }
     Write-Host ''
@@ -3408,6 +3463,97 @@ $(if($dbStats.Length -gt 0){
     try { Start-Process $OutPath | Out-Null; Write-Info 'เปิดในเบราว์เซอร์ให้แล้ว' } catch { }
 }
 
+function Cmd-Db([string]$action, [string]$a, [string]$b) {
+    # aptstack db                     -> ดูสรุป user/DB ของ stack นี้
+    # aptstack db set-root <password> -> ตั้งรหัส root (อัปเดต stack.json + phpMyAdmin ให้)
+    # aptstack db add-user <user> <pass> -> เพิ่ม user ใหม่ (สิทธิ์เต็ม)
+    $cfg = Get-Config
+    $act = if ($action) { "$action".ToLower() } else { 'status' }
+
+    switch ($act) {
+        'status' {
+            Write-Head 'database (stack นี้)'
+            Write-Info "server  : 127.0.0.1:$($cfg.dbPort)  mode=$($cfg.dbMode)"
+            Write-Info "user    : $($cfg.dbUser)"
+            Write-Info "pass    : $(if ($cfg.dbPass) { '(ตั้งไว้ใน config\stack.json)' } else { '(ว่าง)' })"
+            $pma = Get-PmaInfo
+            if ($pma) {
+                Write-Info "phpMyAdmin path : $($pma.Dir)"
+                Write-Info "phpMyAdmin URL  : $($pma.Url)"
+                Write-Info "phpMyAdmin ver  : $(if ($pma.Version) { $pma.Version } else { '?' })"
+            } else {
+                Write-Info 'phpMyAdmin ยังไม่ได้ติดตั้ง — aptstack add phpmyadmin latest'
+            }
+            Write-Host ''
+            Write-Info 'ตั้งรหัส root     : aptstack db set-root <password>'
+            Write-Info 'เพิ่ม user        : aptstack db add-user <user> <password>'
+            Write-Info 'ดูฐานข้อมูล       : aptstack report db'
+            return
+        }
+        { $_ -in @('set-root', 'setroot', 'root-pass', 'rootpass') } {
+            if (-not $a) { throw 'ใช้: aptstack db set-root <password>' }
+            if (Test-PortFree $cfg.dbPort) { throw "DB ไม่รัน (port $($cfg.dbPort)) — aptstack start" }
+            $pass = $a
+            Write-Head 'ตั้งรหัสผ่าน root'
+            $client = Get-MysqlClient $cfg
+            # MariaDB 10.4+ : ALTER USER ทุก host ของ root
+            $list = Invoke-MysqlSql $cfg $client "SELECT host FROM mysql.user WHERE user='root';"
+            $hosts = @($list.Out | Where-Object { $_ -and $_ -notmatch '^\s*host\s' -and $_ -notmatch '^-+$' } | ForEach-Object { "$_".Trim() })
+            if ($hosts.Count -eq 0) { $hosts = @('localhost', '127.0.0.1', '%') }
+            foreach ($h in $hosts) {
+                $esc = $h -replace "'", "''"
+                $sql = "ALTER USER 'root'@'$esc' IDENTIFIED BY '$($pass -replace "'", "''")';"
+                $r = Invoke-MysqlSql $cfg $client $sql
+                if ($r.ExitCode -ne 0) {
+                    Write-Warn2 "ALTER USER root@$h ไม่สำเร็จ — ลอง SET PASSWORD"
+                    $null = Invoke-MysqlSql $cfg $client "SET PASSWORD FOR 'root'@'$esc' = PASSWORD('$($pass -replace "'", "''")');"
+                } else {
+                    Write-Ok "root@$h -> ตั้งรหัสแล้ว"
+                }
+            }
+            $null = Invoke-MysqlSql $cfg $client 'FLUSH PRIVILEGES;'
+            # sync stack.json
+            $cfg = Get-Config
+            $cfg.dbPass = $pass
+            Save-Config $cfg
+            Write-Ok "บันทึก config\stack.json (dbPass)"
+            if (Write-PmaConfig (Join-Path $Script:P.Www 'phpmyadmin')) {
+                Write-Ok 'อัปเดต www\phpmyadmin\config.inc.php แล้ว'
+            }
+            Write-Info 'หมายเหตุ: ถ้า web console/phpMyAdmin login ไม่เข้า ให้ aptstack restart'
+            return
+        }
+        { $_ -in @('add-user', 'adduser', 'user-add') } {
+            if (-not $a -or -not $b) { throw 'ใช้: aptstack db add-user <user> <password>' }
+            if ($a -notmatch '^[A-Za-z0-9_]+$') { throw 'user ใช้ได้เฉพาะ a-z A-Z 0-9 _' }
+            if (Test-PortFree $cfg.dbPort) { throw "DB ไม่รัน (port $($cfg.dbPort)) — aptstack start" }
+            Write-Head "เพิ่ม MySQL user: $a"
+            $client = Get-MysqlClient $cfg
+            $u = $a -replace "'", "''"
+            $p = $b -replace "'", "''"
+            $sqls = @(
+                "CREATE USER IF NOT EXISTS '$u'@'localhost' IDENTIFIED BY '$p';",
+                "CREATE USER IF NOT EXISTS '$u'@'127.0.0.1' IDENTIFIED BY '$p';",
+                "CREATE USER IF NOT EXISTS '$u'@'%' IDENTIFIED BY '$p';",
+                "GRANT ALL PRIVILEGES ON *.* TO '$u'@'localhost' WITH GRANT OPTION;",
+                "GRANT ALL PRIVILEGES ON *.* TO '$u'@'127.0.0.1' WITH GRANT OPTION;",
+                "GRANT ALL PRIVILEGES ON *.* TO '$u'@'%' WITH GRANT OPTION;",
+                'FLUSH PRIVILEGES;'
+            )
+            $fail = 0
+            foreach ($s in $sqls) {
+                $r = Invoke-MysqlSql $cfg $client $s
+                if ($r.ExitCode -ne 0) { $fail++ }
+            }
+            if ($fail -gt 0) { Write-Warn2 "บาง statement ไม่สำเร็จ ($fail) — ดู logs หรือ phpMyAdmin" }
+            else { Write-Ok "เพิ่ม user '$a' แล้ว (localhost/127.0.0.1/%) — สิทธิ์เต็ม" }
+            Write-Info 'login: เลือก user ใหม่ใน phpMyAdmin หรือ mysql CLI'
+            return
+        }
+        default { throw "ใช้: aptstack db [status|set-root <pass>|add-user <user> <pass>]" }
+    }
+}
+
 # ------------------------------------------------- record / play (docker-like script)
 function Get-RecordFlagPath { Join-Path $Script:P.ConfigDir 'record.flag' }
 
@@ -4025,8 +4171,11 @@ function Cmd-Help {
   aptstack add app <folder|zip>    copy version ใหม่ลง แล้ว use เลย
   aptstack add apache <ver|zip|url> เพิ่ม Apache (เช่น 2.4.69 — โหลดจาก Apache Lounge ให้เอง) -> stack\apache\
   aptstack add mysql <version|zip> เพิ่ม MySQL/MariaDB -> stack\mysql\
-  aptstack add pma [ver|latest]    ติดตั้ง/เปลี่ยน phpMyAdmin -> www\phpmyadmin
-  aptstack list --available pma    ดูเวอร์ชัน phpMyAdmin ที่โหลดได้
+  aptstack add phpmyadmin [ver|latest]  ติดตั้ง/เปลี่ยน -> www\phpmyadmin (URL: /phpmyadmin/)
+  aptstack list --available phpmyadmin  ดูเวอร์ชันที่โหลดได้
+  aptstack db                     ดู user/URL ของ stack นี้
+  aptstack db set-root <pass>     ตั้งรหัส root (อัปเดต stack.json + phpMyAdmin ให้)
+  aptstack db add-user <user> <pass>   เพิ่ม MySQL user ใหม่
 
   ── web / db mode (config\stack.json) ─────────────────
   "webMode":  "auto"|"apache"|"builtin"
@@ -4144,6 +4293,7 @@ switch ($Command.ToLower()) {
     'backup'      { Cmd-Backup $Action }
     'seed'        { Cmd-Seed }
     'import'      { Cmd-Import $Action $Value }
+    'db'          { Cmd-Db $Action $Value $Extra }
     'samples'     { Cmd-Samples }
     'report'      { Cmd-Report $Action $Value }
     'record'      { Cmd-Record $Action $Value }
