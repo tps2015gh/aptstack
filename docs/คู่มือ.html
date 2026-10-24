@@ -307,7 +307,8 @@ aptstack list --available pma
 aptstack report db [name]</code></pre>
 <ul>
 <li><b>record/play</b> — บันทึกคำสั่งเป็น <code>scripts\*.ps1</code> รันซ้ำได้ (docker script)</li>
-<li><b>add pma</b> — ติดตั้ง phpMyAdmin → www\phpmyadmin · config จาก stack.json</li>
+<li><b>add phpmyadmin</b> — path <code>www\phpmyadmin\</code> · URL <code>/phpmyadmin/</code> · config จาก stack.json</li>
+<li><b>db set-root / add-user</b> — ตั้งรหัส root / เพิ่ม MySQL user (อัปเดต stack.json + config.inc.php)</li>
 <li><b>report db</b> — รายชื่อ database + ตาราง + ขนาด + datadir/dumps/ดิสก์รวม</li>
 </ul>
 
