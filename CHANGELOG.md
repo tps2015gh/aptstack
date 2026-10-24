@@ -2,6 +2,10 @@
 
 ## 1.3.4 — 2026-10-24
 
+### Docs
+
+- คู่มือ 8c: อ่าน `aptstack logs mysql` (ตาราง symptom→ความหมาย→วิธีแก้) + กติกา stop ปลอดภัย
+
 ### Added
 
 - **`aptstack record start|stop|status`** + **`aptstack play <file.ps1>`**
