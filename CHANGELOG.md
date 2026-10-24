@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.5 — 2026-10-24
+
+### Fixed
+
+- stop: รอ clean shutdown + port ว่าง 45 วิ ก่อน force — กัน Aria corrupt
+- start: health wait 30->60 วิ (Aria recovery ไม่โดนตัด)
+
+### Docs
+
+- คู่มือ 8c: aptstack logs mysql (symptom table + กติกา stop ปลอดภัย + กู้ privilege tables)
 ## 1.3.4 — 2026-10-24
 
 ### Docs
