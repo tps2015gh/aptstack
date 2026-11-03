@@ -56,7 +56,7 @@
 
 <header>
   <h1>คู่มือใช้งาน aptstack</h1>
-  <p class="sub">ฉบับสั้น เน้นลงมือทำ · Portable PHP + MariaDB + จัดการเวอร์ชันแอป สำหรับ Windows</p>
+  <p class="sub">ฉบับสั้น เน้นลงมือทำ · Portable PHP + MariaDB + จัดการเวอร์ชันแอป สำหรับ Windows · <b>v1.3.6</b></p>
 <p class="sub" style="margin-top:6px">🚀 เพิ่งแตก ZIP ใหม่? อ่าน <a href="SCENARIO.md">SCENARIO.md</a> ก่อน —
 walkthrough ยาว ตั้งแต่แตกไฟล์ → ใส่ binary → เล่น 3 แอป → สลับแอป → ตั้งชื่อ version →
 HTTPS/vhost → Service → backup</p>
@@ -68,7 +68,7 @@ HTTPS/vhost → Service → backup</p>
 
 <div class="nav">
   <b>เนื้อหา:</b>
-  <a href="#s0">คืออะไร</a><a href="#s1">เริ่มใช้</a><a href="SCENARIO.md">Scenario ยาว</a><a href="#s2">คำสั่ง</a>
+  <a href="#s0">คืออะไร</a><a href="#s1">เริ่มใช้</a><a href="SCENARIO.md">Scenario ยาว</a><a href="#s2">คำสั่ง</a><a href="#s2b">dist vs diff</a>
   <a href="#s3">สลับเวอร์ชัน</a><a href="#s4">สลับ PHP</a><a href="#s4b">สลับ Apache/MySQL</a><a href="#s4b2">import</a><a href="#s5">XAMPP</a><a href="#s5a">HTTPS</a><a href="#s5b">vhosts</a><a href="#s5c">clone/remove</a>
   <a href="#s6">Service</a><a href="#s6b">dev/prod</a><a href="#s6c">console</a><a href="diagrams.md">ไดอะแกรม</a><a href="#s7">ย้าย server</a><a href="#s8">แก้ปัญหา</a>
   <a href="#s9">ความปลอดภัย</a><a href="#s10">โครงสร้าง</a>
@@ -183,6 +183,32 @@ aptstack service start|stop|status</code></pre>
 
 <p>ทางลัด: <code>as list</code> = <code>aptstack list</code></p>
 
+<h2 id="s2b">2b. Deploy: dist vs diff (1.3.6)</h2>
+<table>
+<tr><th>คำสั่ง</th><th>ใช้ตอน</th><th>ผลลัพธ์</th></tr>
+<tr>
+  <td><code>aptstack dist &lt;app&gt; [out] [nostack]</code></td>
+  <td>ติดตั้งใหม่ / ย้ายเครื่อง / server ยังไม่มีโค้ด</td>
+  <td>copy ทั้งก้อน → <code>dist_paste\</code></td>
+</tr>
+<tr>
+  <td><code>aptstack diff [app] [out]</code></td>
+  <td>patch server เดิม / ส่งเฉพาะไฟล์ที่แก้</td>
+  <td><code>dist\deploy-diff-*</code> (files\ + manifest + apply.ps1)</td>
+</tr>
+</table>
+<pre><code>aptstack dist              <span style="color:#6b7280">:: เมนู/active app → copy ทั้งก้อน</span>
+aptstack dist lands_auth nostack
+aptstack diff              <span style="color:#6b7280">:: เมนูเลือก app + output แล้วเทียบ</span>
+aptstack diff lands_auth dist\deploy-diff-lands
+aptstack import-origin     <span style="color:#6b7280">:: ดูว่า app/binary import มาจากไหน</span>
+aptstack db-list           <span style="color:#6b7280">:: ชื่อ DB + user ทั้งหมด</span></code></pre>
+<div class="box">
+ต้นทางของ diff อ่านจาก <code>versions\&lt;app&gt;\.aptstack-source</code> (zip/folder) ·
+เครื่องมือลึก: <code>tools\make-deploy-diff.ps1 -Help</code> ·
+lineage: <code>tools\show-app-lineage.ps1</code><br>
+<b>dist</b> = ชุดสมบูรณ์ไปวาง server ใหม่ · <b>diff</b> = เฉพาะ patch ไป overwrite server เดิม
+</div>
 <h2 id="s3">3. เปลี่ยนเวอร์ชันแอป (สำคัญที่สุด)</h2>
 <h3>หลักการ</h3>
 <pre><code>www\app   =  junction ชี้ไป  versions\&lt;เวอร์ชันที่ใช้อยู่&gt;</code></pre>
@@ -480,7 +506,13 @@ aptstack service start</code></pre>
 <li>ติดตั้งตอน stack manual ยังรันอยู่ → <b>ระบบเตือน</b> ให้ <code>aptstack stop</code> ก่อน</li>
 <li>ถอน: <code>aptstack service uninstall</code></li>
 </ul>
-<p>เคสจริง notebook → server ไม่มีเน็ต: <code>aptstack dist</code> → copy → use/start/doctor
+<pre><code><span style="color:#6b7280">:: บน notebook</span>
+aptstack dist todo-1.1        <span style="color:#6b7280">:: ทั้งก้อน → dist_paste\</span>
+aptstack diff todo-1.1        <span style="color:#6b7280">:: เฉพาะไฟล์ที่ต่าง (patch)</span>
+aptstack import-origin        <span style="color:#6b7280">:: ดู origin ทุก app</span>
+aptstack db-list              <span style="color:#6b7280">:: ชื่อ DB + user</span>
+<span style="color:#6b7280">:: copy ไป server → use/start/doctor</span></code></pre>
+<p>เคสจริง notebook → server ไม่มีเน็ต: <code>aptstack dist</code> / <code>aptstack diff</code> → copy → use/start/doctor
 · ภาพรวม: <a href="diagrams.md">diagrams.md</a> · ละเอียด: <a href="SCENARIO.md">SCENARIO.md</a></p>
 
 
@@ -583,6 +615,11 @@ aptstack stop 3307          <span style="color:#6b7280">:: หยุดตัว
 │   ├── seed.sql                   สร้างด้วย: aptstack seed
 │   └── vhosts.sample.json         ตัวอย่าง config virtual host
 │
+├── tools\
+│   ├── make-release.ps1         build zip จาก git archive
+│   ├── push-github.ps1          push ด้วย token (ไม่เก็บ token ใน .git)
+│   ├── make-deploy-diff.ps1     เทียบ 2 ฝั่ง → เฉพาะไฟล์ต่าง
+│   └── show-app-lineage.ps1     รายงานต้นทาง app (HTML)
 ├── templates\                  ✅ ต้นฉบับ (แก้ตรงนี้, commit ลง git)
 │   ├── php-extensions.ini
 │   ├── php-hardening.ini
