@@ -17,6 +17,8 @@
 | 2026-10-22 ดึก | **rewrite git history** ล้างชื่อระบบจริง/ชื่อหน่วยงาน/IP เครื่อง ออกจากทุก commit + ลบ release ที่มีไฟล์เก่า + ลบทของจริงออกจากโฟลเดอร์ทดสอบ |
 | **2026-10-23** | **v1.2.0**: ตัวอย่างแอป 3 ตัว (hello/todo/sysinfo) · `add php 8.3.36` เติม URL เอง · `samples` · `docs/SCENARIO.md` + `OFFLINE-DEPLOY.md` |
 | 2026-10-23 (ต่อเนื่อง) | **unreleased**: `report`(HTML พิมพ์ได้) · `size`(เตือนบวม) · `run` · `dist`(copy-paste) · `git` · `clone/remove/migrate` · **web console (localhost เท่านั้น)** · per-app URL (`/todo-app/` `/sysinfo-app/`) · ไดอะแกรม 5 ภาพ · app family manifest |
+| 2026-10-25 | debug PHP7 TS vs NTS (`Test-PhpApacheMod`) + security audit docs |
+| **2026-11-03** | **v1.3.6**: `diff` (origin vs versions → changed files) · `import-origin` · `db-list` · `list` โชว์ชื่อ DB+users · `LICENSE` MIT (เชิงพาณิชย์ได้) · help แยก dist vs diff |
 
 ---
 
@@ -27,7 +29,8 @@
 | 1.0.0 | `v1.0.0` | ตัวแรก: สลับเวอร์ชัน + Service + Apache | **ถูกลบ** (zip มีชื่อระบบจริง) |
 | 1.1.0 | `v1.1.0` | HTTPS + vhosts + logs + health probe | บน GitHub |
 | 1.2.0 | `v1.2.0` | ตัวอย่าง 3 แอป + auto-URL + SCENARIO | บน GitHub (asset ยังไม่รวมของหลัง 1.2.0) |
-| unreleased | — | report/size/dist/git/run/console/clone/remove/migrate | **push แล้วบน main แต่ยังไม่สร้าง release** |
+| unreleased | — | report/size/dist/git/run/console/clone/remove/migrate | บน main |
+| 1.3.6 | `v1.3.6` | diff · import-origin · db-list · LICENSE MIT | กำลัง push |
 
 ---
 

@@ -151,7 +151,10 @@ are ignored on purpose (this repo is public).
 | `aptstack report` | printable HTML status report (checks + probes + **folder sizes / bloat warnings**) |
 | `aptstack size` | CLI size table — every folder, per-version breakdown, disk-free warnings |
 | `aptstack run` | dev console: start + block on screen, Ctrl+C stops (**no service needed**) |
-| `aptstack dist <app> [out] [nostack]` | build copy-paste deploy bundle (`VERSIONS.txt` + `DEPLOY.txt`) |
+| `aptstack dist <app> [out] [nostack]` | build copy-paste deploy bundle — **whole tree** |
+| `aptstack diff [app] [out]` | compare origin vs `versions\<app>` → **changed files only** |
+| `aptstack import-origin` | show where every app/binary was imported from |
+| `aptstack db-list` | list database names + all DB users (short) |
 | `aptstack git init\|status\|clear` | optional git for the bundle on the server |
 | `aptstack clone app <from> <to>` | copy app code (does not switch; **same DB**) |
 | `aptstack clone mysql <from> <to>` | copy a datadir (requires `stop` + confirm) |
@@ -233,4 +236,4 @@ See [SECURITY.md](SECURITY.md). Short version:
 
 ## License
 
-MIT
+MIT — commercial use allowed (sell / use in orgs / modify; keep copyright notice). See [LICENSE](LICENSE).

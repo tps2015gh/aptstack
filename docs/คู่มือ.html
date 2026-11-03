@@ -543,28 +543,12 @@ aptstack stop 3307          <span style="color:#6b7280">:: หยุดตัว
 <tr><td>หน้าแอปขาว / <code>mysqli_connect()</code> ไม่มี</td><td>extension ไม่โหลด</td><td><code>aptstack restart</code></td></tr>
 <tr><td><code>Unable to load dynamic library</code></td><td><code>extension_dir</code> ผิด</td><td><code>aptstack restart</code></td></tr>
 <tr><td>พอร์ตชน</td><td>โปรแกรมอื่นจองไว้</td><td>แก้ <code>httpPort</code>/<code>dbPort</code> แล้ว restart</td></tr>
-<tr><td>MariaDB ไม่ขึ้น / #1030 / ตารางพัง</td><td>อ่าน log ก่อน</td><td><b><code>aptstack logs mysql</code></b> (หัวข้อ 8c)</td></tr>
-<tr><td>MariaDB ไม่ขึ้น (ทั่วไป)</td><td>datadir/permission</td><td>ดู <code>logs\mariadb-error.log</code></td></tr>
+<tr><td>MariaDB ไม่ขึ้น</td><td>datadir/permission</td><td>ดู <code>logs\mariadb-error.log</code></td></tr>
 <tr><td>Web ไม่ขึ้น</td><td>port/ini</td><td>ดู <code>logs\php-error.log</code></td></tr>
 <tr><td>เปลี่ยน php.ini แล้วไม่เห็นผล</td><td>ถูก generate ทับ</td><td>แก้ที่ <code>templates\</code> แล้ว restart</td></tr>
 <tr><td><code>aptstack</code> ไม่รู้จัก</td><td>อยู่ผิดโฟลเดอร์</td><td><code>cd</code> ก่อน หรือใช้ <code>as</code></td></tr>
 <tr><td>ExecutionPolicy error</td><td>—</td><td>ใช้ <code>aptstack.cmd</code></td></tr>
 </table>
-
-<h2 id="s8c">8c. aptstack logs mysql — อ่าน log ยังไง</h2>
-<p>ใช้ตอน <code>[ERR] MariaDB ไม่ตอบ</code> · phpMyAdmin <code>#1030</code> · สงสัย kill ผิดจังหวะ</p>
-<pre><code>aptstack logs mysql           <span style="color:#6b7280">:: 50 บรรทัดท้าย</span>
-aptstack logs mysql 100
-aptstack logs all</code></pre>
-<table>
-<tr><th>เห็นใน log</th><th>ความหมาย</th><th>ทำอย่างไร</th></tr>
-<tr><td><code>Aria engine: recovery</code></td><td>กำลังซ่อม crash recovery</td><td><b>ห้าม kill</b> · รอ start (60 วิ)</td></tr>
-<tr><td><code>ibdata1 must be writable</code></td><td>mysqld ค้าง hold ไฟล์</td><td><code>aptstack ports</code> → kill orphan → start</td></tr>
-<tr><td><code>privilege tables ... crashed</code> / <code>#1030</code></td><td>ตาราง system Aria พัง (จาก force kill)</td><td>stop → อย่ารัว start → ดูขั้นกู้ในคู่มือ .md 8c</td></tr>
-<tr><td>port in use</td><td>พอร์ตถูกจอง</td><td><code>aptstack ports</code> → <code>stop &lt;port&gt;</code></td></tr>
-</table>
-<p><b>กติกาทอง:</b> ใช้ <code>aptstack stop</code> เท่านั้น · ห้าม <code>taskkill /F</code> mysqld ·
-<code>backup</code> ก่อนย้าย/อัปเกรด · ข้อมูลแอป (InnoDB) ไม่หายถ้าไม่ลบ datadir</p>
 
 <h2 id="s9">9. ความปลอดภัย</h2>
 <pre><code>aptstack doctor</code></pre>

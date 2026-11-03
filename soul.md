@@ -89,6 +89,8 @@ repo เป็น public → datadir, dump, โค้ดแอปจริง, �
 6. **เคส default vhost** — พอเพิ่ม `<VirtualHost>` ตัวแรก Apache เอาตัวแรกเป็น default
 7. **เคส CRLF** — `.cmd` เป็น LF → cmd พิมพ์ `'-' is not recognized`
 8. **เคส `$h` ทับ `$H`** — PowerShell ไม่แยกตัวพิมพ์ใหญ่/เล็ก → script พังกลางคัน
+9. **เคส dist ≠ diff** — `dist` = copy ทั้งก้อน · `diff` = เฉพาะไฟล์ที่ต่าง → ต้องอธิบายใน help
+10. **เคส BOM หายหลัง edit** — เครื่องมือแก้ไฟล์บางตัวเขียน UTF-8 ไม่มี BOM → PS5.1 parse เพี้ยน
 
 > บทเรียนรวม: **ของที่ "ดูเหมือนถูก" ต้องรันพิสูจน์** — syntax check ผ่าน ≠ ใช้งานได้
 
@@ -99,6 +101,16 @@ repo เป็น public → datadir, dump, โค้ดแอปจริง, �
 เหมือน — แต่จะทำ **`doctor` + health probe + config generate + examples ให้มีตั้งแต่วันแรก**
 เพราะสามอย่างนี้คือสิ่งที่เปลี่ยนของ "รันได้บนเครื่องตัวเอง"
 ให้เป็นของ "copy ไป server แล้วมั่นใจได้"
+
+**License:** MIT — **ใช้เชิงพาณิชย์ได้** (ขาย/ใช้ในองค์กร/ดัดแปลง แค่คง copyright notice)
+
+---
+
+## 7. Lands Authen (แอปใน versions\*) — ค่านิยมเดียวกัน
+
+เมื่อแก้โค้ดแอป (CI3) ให้ยึดแนวเดิม: **บอกตรง ๆ ว่าอะไรใช้จริง / อะไรยังไม่ได้ใช้**,
+**อย่าปล่อยรายงานโกหก** (สิทธิ์, form_status), **แยกเอกสารสิทธิ์กับแผน improve**,
+**backfill/rollback ต้องทำได้** — ดู [architech.md](architech.md) · [ai.md](ai.md)
 
 ---
 

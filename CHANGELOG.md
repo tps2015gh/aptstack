@@ -1,28 +1,25 @@
 # Changelog
 
-## Unreleased
+## 1.3.6 — 2026-11-03
 
 ### Added
 
-- **`aptstack config`** — ตั้ง webMode/dbMode/https/พอร์ต จาก CLI (ไม่แก้มือ stack.json)
-  - `config web apache|builtin|auto` · `config db internal|external` · `config https on|off`
-  - `config http <port>` · `config dbport <port>`
-- คู่กับ `aptstack db set-root` / `db add-user`
-## 1.3.5 — 2026-10-24
+- **`aptstack diff [app] [out]`** — เทียบต้นทาง (`.aptstack-source`) vs `versions\<app>` → เฉพาะไฟล์ที่ต่าง
+  · เมนูเลือก app + output · แสดง origin path/สถานะ · เรียก `tools\make-deploy-diff.ps1`
+  · ต่างจาก `aptstack dist` = copy ทั้งก้อน (ดู help: `dist` vs `diff`)
+- **`aptstack import-origin`** (alias: `origin`) — แสดงต้นทาง import ของทุก app + binary (group + OK/MISS)
+- **`aptstack db-list`** — ชื่อ database + user ทั้งหมด (สั้น)
+- **`aptstack list`** — เพิ่มส่วน Database content: ชื่อ DB + DB users ทั้งหมด
+- **`aptstack db list`** — เพิ่มรายการ user (`mysql.user`) ต่อท้ายรายงานขนาด
+- **`tools\make-deploy-diff.ps1`** / **`tools\show-app-lineage.ps1`** — deploy-diff + app lineage HTML
+- **`LICENSE`** — MIT (ใช้เชิงพาณิชย์ได้)
 
-### Fixed
+### Changed
 
-- stop: รอ clean shutdown + port ว่าง 45 วิ ก่อน force — กัน Aria corrupt
-- start: health wait 30->60 วิ (Aria recovery ไม่โดนตัด)
+- help แยกชัด **dist vs diff** (copy ทั้งก้อน vs เฉพาะ patch)
+- BOM UTF-8 คงไว้ใน `aptstack.ps1` (กัน parse เพี้ยนบน PS 5.1)
 
-### Docs
-
-- คู่มือ 8c: aptstack logs mysql (symptom table + กติกา stop ปลอดภัย + กู้ privilege tables)
 ## 1.3.4 — 2026-10-24
-
-### Docs
-
-- คู่มือ 8c: อ่าน `aptstack logs mysql` (ตาราง symptom→ความหมาย→วิธีแก้) + กติกา stop ปลอดภัย
 
 ### Added
 

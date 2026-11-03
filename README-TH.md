@@ -41,6 +41,18 @@ aptstack doctor     :: ปลอดภัยไหม
 aptstack report     :: สรุปเป็น HTML (พิมพ์ได้)
 ```
 
+**deploy / ต้นทาง (1.3.6)**
+
+```cmd
+aptstack dist <app>     :: copy ทั้งก้อน → dist_paste\ (ติดตั้งใหม่)
+aptstack diff [app]     :: เทียบต้นทาง vs versions\ → เฉพาะไฟล์ที่ต่าง (patch)
+aptstack import-origin  :: ดูว่าแต่ละ app import มาจากไหน
+aptstack db-list        :: ชื่อ DB + user ทั้งหมด (สั้น)
+```
+
+> **dist vs diff** — `dist` = เอาชุดสมบูรณ์ไปวาง server ใหม่ ·
+> `diff` = เอาเฉพาะ patch ไป overwrite server เดิม (ดู `aptstack help`)
+
 > จำไม่ได้? พิมพ์ `aptstack help` หรือ `-h` ได้ทุกเมื่อ
 
 ---
@@ -398,4 +410,4 @@ aptstack logs all
 
 ## License
 
-MIT — ใช้/แก้/แจกได้ตามใจ
+MIT — **ใช้เชิงพาณิชย์ได้** (ขาย/ใช้ในองค์กร/ดัดแปลง แค่คง copyright notice) · รายละเอียดใน [LICENSE](LICENSE)

@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     aptstack service manager - ติดตั้ง/ถอน Windows Service
@@ -14,7 +14,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('install', 'uninstall', 'start', 'stop', 'restart', 'status', 'compile')]
+    [ValidateSet('', 'install', 'uninstall', 'start', 'stop', 'restart', 'status', 'compile', 'help', 'h')]
     [string]$Action = 'status'
 )
 
@@ -91,6 +91,15 @@ function Invoke-Sc([string[]]$scArgs, [switch]$Throw) {
     $txt = $out -join ' '
     if ($Throw -and $LASTEXITCODE -ne 0) { throw "sc $($scArgs -join ' ') -> $txt" }
     return $txt
+}
+
+# normalize empty -> status (ValidateSet allows '' so bare -Action '' ไม่ explode)
+if ([string]::IsNullOrWhiteSpace($Action)) { $Action = 'status' }
+if ($Action -in @('help', 'h')) {
+    Write-Head 'service.ps1 actions'
+    Write-Host '   -Action install | uninstall | start | stop | restart | status | compile' -ForegroundColor White
+    Write-Info 'ผ่าน aptstack:  aptstack service [action]  (ไม่ใส่ = help + status)'
+    return
 }
 
 switch ($Action) {

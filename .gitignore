@@ -74,3 +74,6 @@ Desktop.ini
 # --- record scripts (session playbooks) ---
 /scripts/
 /www/phpmyadmin.bak*/
+
+# local scratch
+/tmp_exports.py

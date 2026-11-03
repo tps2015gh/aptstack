@@ -118,3 +118,9 @@ logs\                  php/apache/mariadb error log  ← aptstack logs
 - ไม่ได้ patch PHP ให้ (ต้องอัปเดต binary เอง) · ไม่ได้แก้ช่องโหว่ในโค้ดแอป
 - `root/root` เป็นค่าเริ่มต้น → ต้องเปลี่ยนก่อนขึ้นของจริง
 - ทดสอบบน Windows 11 ยังไม่ใช่ Windows Server
+
+## Deploy modes (1.3.6)
+
+- `aptstack dist` — copy whole bundle for new install/migration
+- `aptstack diff` — compare origin (`.aptstack-source`) vs `versions\\` and ship only changed files (`tools\\make-deploy-diff.ps1`)
+- `aptstack import-origin` — show import provenance for every app/binary

@@ -727,9 +727,21 @@ function Test-Running($name) {
     $s = $s.Trim()
     if (-not $s) { return $null }
     $p = Get-Process -Id ([int]$s) -ErrorAction SilentlyContinue
-    if ($p) { return $p }
-    Remove-Item $f -Force -ErrorAction SilentlyContinue
-    return $null
+    if (-not $p) {
+        Remove-Item $f -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+    # Windows นำ PID กลับมาใช้ใหม่ได้ — ต้องชื่อ process ตรงด้วย ไม่งั้น status/ start หลอกว่ารันอยู่
+    $expect = switch ("$name".ToLower()) {
+        'mysql' { @('mysqld', 'mariadbd', 'mysql') }
+        'web'   { @('httpd', 'php-cgi', 'php', 'nginx') }
+        default { @("$name".ToLower()) }
+    }
+    if ($expect -notcontains $p.ProcessName.ToLower()) {
+        Remove-Item $f -Force -ErrorAction SilentlyContinue
+        return $null
+    }
+    return $p
 }
 
 function Set-Pid($name, $id) {
@@ -1561,10 +1573,126 @@ function Get-PmaInfo {
     }
 }
 
+function Select-AddAppSource {
+    # aptstack add app (ไม่ใส่ path) -> ลิสต์ zip ใน downloads\ + โฟลเดอร์แอป แล้วให้เลือกหมายเลข
+    # คืนค่า path เต็ม หรือ $null ถ้ายกเลิก / non-interactive
+    $items = @()
+
+    # 1) zip ทั้งหมดใน downloads\
+    $dl = $Script:P.Downloads
+    if (Test-Path $dl) {
+        $zips = @(Get-ChildItem -LiteralPath $dl -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -match '^\.(zip|7z)$' } |
+            Sort-Object LastWriteTimeUtc -Descending)
+        foreach ($z in $zips) {
+            $items += [pscustomobject]@{ Kind = 'zip'; Path = $z.FullName; Name = $z.Name; Detail = ('{0:N1} MB' -f ($z.Length / 1MB)) }
+        }
+    }
+
+    # 2) โฟลเดอร์แอป: examples\ + โฟลเดอร์ข้าง aptstack root (ข้าม aptstack* / hidden / _setup*)
+    $searchRoots = @()
+    if (Test-Path $Script:P.Root) { $searchRoots += $Script:P.Root }
+    $ex = Join-Path $Script:P.Root 'examples'
+    if (Test-Path $ex) { $searchRoots += $ex }
+    $parent = Split-Path -Parent $Script:P.Root
+    if ($parent -and (Test-Path $parent)) { $searchRoots += $parent }
+    $cwd = (Get-Location).Path
+    if ($cwd) { $searchRoots += $cwd }
+
+    $seenDir = @{}
+    foreach ($root in ($searchRoots | Select-Object -Unique)) {
+        $dirs = @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)
+        foreach ($d in $dirs) {
+            if ($seenDir.ContainsKey($d.FullName)) { continue }
+            $seenDir[$d.FullName] = $true
+            $n = $d.Name
+            if ($n -match '^\.' -or $n -match '^aptstack' -or $n -match '^stack$' -or $n -match '^config$' -or $n -match '^versions$' -or $n -match '^www$' -or $n -match '^data$' -or $n -match '^logs$' -or $n -match '^templates$' -or $n -match '^downloads$' -or $n -match '^out$' -or $n -match '^dist$' -or $n -match '^_mariadb' -or $n -match '^_setup_') { continue }
+            # โฟลเดอร์แอป = มี index.php / app\index.php / ไฟล์ .php อยู่ในนั้น หรืออยู่ใน examples\
+            $inExamples = ($root -eq $ex)
+            $looksApp = $inExamples -or
+                (Test-Path (Join-Path $d.FullName 'index.php')) -or
+                (Test-Path (Join-Path $d.FullName 'app\index.php')) -or
+                (@(Get-ChildItem -LiteralPath $d.FullName -Filter '*.php' -File -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1).Count -gt 0)
+            if (-not $looksApp) { continue }
+            $items += [pscustomobject]@{ Kind = 'dir'; Path = $d.FullName; Name = $n; Detail = 'folder' }
+        }
+    }
+
+    if ($items.Count -eq 0) {
+        Write-Err2 'ไม่พบ zip ใน downloads\ หรือโฟลเดอร์แอป'
+        Write-Info 'ส่ง path เองได้: aptstack add app <folder|zip>'
+        return $null
+    }
+
+    Write-Head "เลือกแหล่งแอป (พบ $($items.Count) รายการ)"
+    Write-Info 'zip = ไฟล์ใน downloads\ · dir = โฟลเดอร์ที่มี index.php'
+    Write-Host ''
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        $it = $items[$i]
+        $tag = if ($it.Kind -eq 'zip') { 'zip' } else { 'dir' }
+        Write-Host ("  [{0,2}]  {1,-4}  {2,-48}  {3}" -f ($i + 1), $tag, $it.Name, $it.Detail) -ForegroundColor White
+    }
+    Write-Host ''
+    Write-Host ("  พิมพ์หมายเลข 1-{0} แล้ว Enter (Enter = ยกเลิก · path เองได้ · .. = โฟลเดอร์แม่)" -f $items.Count) -ForegroundColor Yellow
+    $ans = $null
+    try {
+        if ([Console]::IsInputRedirected) { $ans = [Console]::In.ReadLine() }
+        else { $ans = Read-Host '  > ' }
+    } catch { return $null }
+    if ($null -eq $ans -or [string]::IsNullOrWhiteSpace($ans)) { Write-Info 'ยกเลิก'; return $null }
+    $ans = "$ans".Trim().Trim('"')
+
+    # path: มี \ หรือ : หรือขึ้นต้นด้วย . (รวม .. และ .) — ใช้ได้ทั้ง zip/โฟลเดอร์
+    $isPathish = ($ans -match '[\\/]') -or ($ans -match '^[A-Za-z]:') -or ($ans -eq '.') -or ($ans -eq '..') -or ($ans -match '^\.[\\/]')
+    if ($isPathish) {
+        if (Test-Path -LiteralPath $ans) {
+            $resolved = (Resolve-Path -LiteralPath $ans).Path
+            if (Test-Path -LiteralPath $resolved -PathType Container) {
+                Write-Ok "ไปที่โฟลเดอร์: $resolved"
+            } else {
+                Write-Ok "เลือกไฟล์: $resolved"
+            }
+            return $resolved
+        }
+        # .. / . อาจ resolve ไม่ได้ถ้า cwd ถูกลบ — ลอง Resolve แบบไม่บังคับ
+        try {
+            $resolved = [System.IO.Path]::GetFullPath((Join-Path (Get-Location).Path $ans))
+            if (Test-Path -LiteralPath $resolved) { return $resolved }
+        } catch { }
+        Write-Err2 "ไม่พบ path: $ans"
+        Write-Info 'ตัวอย่าง: ..  ·  ..\myapp  ·  C:\path\app  ·  หรือพิมพ์หมายเลข'
+        return $null
+    }
+
+    $n = 0
+    if (-not [int]::TryParse($ans, [ref]$n)) {
+        # ไม่ใช่เลข — ลองตีเป็น path สุดท้าย (เช่น ชื่อโฟลเดอร์ใน cwd)
+        if (Test-Path -LiteralPath $ans) { return (Resolve-Path -LiteralPath $ans).Path }
+        Write-Err2 "ไม่ถูกต้อง: '$ans' (ต้องเป็นหมายเลข 1-$($items.Count) · path · หรือ ..)"
+        return $null
+    }
+    if ($n -lt 1 -or $n -gt $items.Count) {
+        Write-Err2 "ไม่ถูกต้อง: '$ans' (ต้องเป็นหมายเลข 1-$($items.Count))"
+        return $null
+    }
+    $pick = $items[$n - 1]
+    if (-not (Test-Path $pick.Path)) { Write-Err2 "ไม่พบ: $($pick.Path)"; return $null }
+    Write-Ok ("เลือก [{0}] {1}" -f $pick.Kind, $pick.Path)
+    return $pick.Path
+}
+
 function Cmd-Add($kind, $source, $extra) {
     $kind = Normalize-PmaKind $kind
-    if (-not $kind -or -not $source) {
-        throw 'ใช้: aptstack add <app|php|mysql|apache|phpmyadmin> <path|url|version> [name]   (เช่น: aptstack add php 8.3.36 หรือ aptstack add phpmyadmin latest)'
+    if (-not $kind) {
+        throw 'ใช้: aptstack add <app|php|mysql|apache|phpmyadmin> <path|url|version> [name]   (เช่น: aptstack add app  แล้วเลือกหมายเลข หรือ aptstack add php 8.3.36)'
+    }
+    # add app โดยไม่ใส่ path -> เมนูเลือก zip/โฟลเดอร์ด้วยหมายเลข
+    if ("$kind".ToLower() -eq 'app' -and [string]::IsNullOrWhiteSpace("$source")) {
+        $source = Select-AddAppSource
+        if (-not $source) { return }
+    }
+    if (-not $source) {
+        throw "ใช้: aptstack add $kind <path|url|version> [name]   (app ไม่ใส่ path = เปิดเมนูเลือกหมายเลข)"
     }
     Ensure-Dirs
 
@@ -1604,9 +1732,31 @@ function Cmd-Add($kind, $source, $extra) {
     switch ($kind.ToLower()) {
         'app' {
             # $src ถูก resolve ไว้ด้านบนแล้ว (รองรับ URL / เลขเวอร์ชัน / path)
+            # safety: ห้าม copy aptstack root / workspace ทั้งก้อน (.. / . อาจชี้ไปที่นั่น)
+            if (Test-Path -LiteralPath $src -PathType Container) {
+                $srcFull = (Resolve-Path -LiteralPath $src).Path.TrimEnd('\')
+                $rootFull = $Script:P.Root.TrimEnd('\')
+                $parentOfRoot = Split-Path -Parent $rootFull
+                $looksBundle = (Test-Path (Join-Path $srcFull 'config\stack.json')) -or
+                    (Test-Path (Join-Path $srcFull 'stack\mysql')) -or
+                    (Test-Path (Join-Path $srcFull 'aptstack.ps1')) -or
+                    (Test-Path (Join-Path $srcFull 'aptstack.cmd'))
+                $isRootOrParent = ($srcFull -eq $rootFull) -or
+                    ($parentOfRoot -and ($srcFull -eq $parentOfRoot.TrimEnd('\')))
+                if ($isRootOrParent -or ($looksBundle -and ($srcFull -like '*aptstack*'))) {
+                    Write-Err2 "ไม่ยอม add app จากโฟลเดอร์ stack/workspace: $srcFull"
+                    Write-Info 'เลือกโฟลเดอร์แอปจริง (มี index.php) หรือ zip ใน downloads\'
+                    Write-Info 'ตัวอย่าง: ..\my-app  ·  หรือพิมพ์หมายเลขในเมนู'
+                    return
+                }
+            }
             $name = if ($extra) { $extra } else {
                 $n = Split-Path $src -Leaf
                 $n -replace '\.(zip|7z|tar\.gz)$', ''
+            }
+            if ([string]::IsNullOrWhiteSpace($name) -or $name -eq '.' -or $name -eq '..') {
+                Write-Err2 "ชื่อ target ไม่ถูกต้อง: '$name' — ระบุชื่อด้วย: aptstack add app <path> <name>"
+                return
             }
             $dest = Join-Path $Script:P.Versions $name
             if (Test-Path $dest) { Write-Warn2 "มีอยู่แล้ว: $dest — ถ้าจะแทนที่ให้ลบก่อน"; return }
@@ -1725,6 +1875,65 @@ function Cmd-Add($kind, $source, $extra) {
 }
 
 # ---------------------------------------------------------------- list
+function Get-DbUserRows($cfg, [string]$client) {
+    # คืน array of @{ User; Host } จาก mysql.user
+    $r = Invoke-MysqlSql $cfg $client 'SELECT user, host FROM mysql.user ORDER BY user, host;'
+    if ($r.ExitCode -ne 0) { return @() }
+    $out = @()
+    foreach ($line in $r.Out) {
+        if (-not $line) { continue }
+        if ($line -match '^\s*user\s' -or $line -match '^-+$' -or $line -match '^(Warning|Using a password)') { continue }
+        $parts = "$line" -split "`t"
+        if ($parts.Count -ge 2) {
+            $u = $parts[0].Trim(); $h = $parts[1].Trim()
+            if ($u) { $out += [pscustomobject]@{ User = $u; Host = $h } }
+        } elseif ($line -match '^(\S+)\s+(\S+)\s*$') {
+            $out += [pscustomobject]@{ User = $Matches[1]; Host = $Matches[2] }
+        }
+    }
+    return $out
+}
+
+function Show-DbNamesAndUsers($cfg, [bool]$ShowEngineHint = $true) {
+    # แสดงชื่อ database + รายชื่อ user ทั้งหมด (ใช้ใน aptstack list / db list / db-list)
+    if ($ShowEngineHint) {
+        Write-Host '  Databases (ชื่อ):' -ForegroundColor White
+    }
+    if (Test-PortFree $cfg.dbPort) {
+        Write-Info "DB ไม่รัน (port $($cfg.dbPort)) — aptstack start แล้วค่อยดูรายชื่อ"
+        Write-Info "config user : $($cfg.dbUser)   (ดู pass ใน config\stack.json)"
+        return
+    }
+    $client = $null
+    try { $client = Get-MysqlClient $cfg } catch {
+        Write-Warn2 $_.Exception.Message
+        return
+    }
+
+    $sys = @('information_schema', 'performance_schema', 'sys', 'mysql')
+    $names = Get-ExistingDatabaseNames $cfg $client
+    if ($names.Count -eq 0) {
+        Write-Info '(ไม่มี user database หรือดึงไม่ได้)'
+    } else {
+        Write-Host ('   ' + ($names -join '  ·  ')) -ForegroundColor Cyan
+    }
+
+    $users = Get-DbUserRows $cfg $client
+    Write-Host '  DB users (ทั้งหมด):' -ForegroundColor White
+    if ($users.Count -eq 0) {
+        Write-Info "(ดึงรายชื่อ user ไม่ได้ — ลอง: aptstack db-list)"
+    } else {
+        # จับกลุ่ม user -> hosts
+        $groups = $users | Group-Object User | Sort-Object Name
+        foreach ($g in $groups) {
+            $hosts = @($g.Group | ForEach-Object { $_.Host }) -join ', '
+            $isRoot = if ($g.Name -eq $cfg.dbUser) { '  [config]' } else { '' }
+            Write-Host ("   {0,-16} @ {1}{2}" -f $g.Name, $hosts, $isRoot) -ForegroundColor Gray
+        }
+        Write-Info ("รวม {0} user / {1} record (user@host)" -f @($groups).Count, $users.Count)
+    }
+}
+
 function Cmd-List {
     $cfg = Get-Config
     $cur = Get-CurrentAppName
@@ -1756,7 +1965,7 @@ function Cmd-List {
     }
 
     $dbs = @(Get-MySqlVersions)
-    Write-Host '  Database:' -ForegroundColor White
+    Write-Host '  Database engines:' -ForegroundColor White
     if ($dbs.Count -eq 0) { Write-Info '(ยังไม่มี)' }
     foreach ($m in $dbs) {
         Write-Host "     $($m.Version)  $($m.Dir)" -ForegroundColor Gray
@@ -1764,7 +1973,14 @@ function Cmd-List {
         if ($sm -and $sm['source']) { Write-Host "           from: $($sm['source'])" -ForegroundColor DarkGray }
     }
 
+    # ชื่อ database + user ทั้งหมด (จาก server จริง)
+    Write-Host ''
+    Write-Host '  ── Database content ──' -ForegroundColor Yellow
+    Show-DbNamesAndUsers $cfg $true
+    Write-Info 'รายละเอียด/ขนาด: aptstack db list ·  user เพิ่ม: aptstack db add-user'
+
     $aps = @(Get-ApacheVersions)
+    Write-Host ''
     Write-Host '  Apache:' -ForegroundColor White
     if ($aps.Count -eq 0) { Write-Info '(ยังไม่มี) ใช้ได้ด้วย: aptstack add apache <httpd zip>' }
     foreach ($a in $aps) {
@@ -1780,7 +1996,7 @@ function Cmd-List {
     Write-Host "  PHP     : $(if ($cfg.php) { $cfg.php } else { '(ยังไม่เลือก)' })"
     Write-Host "  Web     : $wm   (webMode ใน config\stack.json = $($cfg.webMode))"
     Write-Host "  HTTP    : http://127.0.0.1:$($cfg.httpPort)/$($cfg.appAlias)/"
-    Write-Host "  MySQL   : 127.0.0.1:$($cfg.dbPort)"
+    Write-Host "  MySQL   : 127.0.0.1:$($cfg.dbPort)  user=$($cfg.dbUser)  mode=$($cfg.dbMode)"
     Write-Host "  Service : $(if (Get-Service -Name $cfg.serviceName -EA SilentlyContinue) { $cfg.serviceName } else { '(ยังไม่ติดตั้ง)' })"
 
     Write-Head 'โฟลเดอร์ (วาง/ลบ/จัดการ ได้ที่นี่)'
@@ -2877,13 +3093,193 @@ function Cmd-ImportRoot([string]$oldRoot, [string]$flags) {
     if ($skipDl) { Write-Info '  ไม่ได้ย้าย downloads (--no-downloads) — โหลดใหม่ด้วย: aptstack add ...' }
 }
 
+function Select-ImportFromFolder([string]$folder) {
+    # โฟลเดอร์ dump (ไม่ใช่ aptstack root) -> ไล่ .sql/.sql.zip/.zip แล้วให้เลือกหมายเลข
+    # คืนค่า: @([IO.FileInfo]...) หรือ $null ถ้าเลือก/ไม่มีไฟล์
+    $files = @(
+        Get-ChildItem -LiteralPath $folder -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -match '^\.(sql|zip)$' -or $_.Name -match '\.sql\.zip$' } |
+            Sort-Object `
+                @{ e = { if ($_.Name -match '\.sql$') { 0 } elseif ($_.Name -match '\.sql\.zip$') { 1 } else { 2 } } }, `
+                @{ e = { $_.LastWriteTimeUtc }; Descending = $true }, `
+                Name
+    )
+    if ($files.Count -eq 0) {
+        Write-Err2 "ไม่พบไฟล์ .sql / .sql.zip / .zip ในโฟลเดอร์นี้: $folder"
+        return $null
+    }
+
+    Write-Head "พบไฟล์ import ในโฟลเดอร์ ($($files.Count) ไฟล์)"
+    Write-Info $folder
+    Write-Host ''
+    for ($i = 0; $i -lt $files.Count; $i++) {
+        $f = $files[$i]
+        $mb = [math]::Round($f.Length / 1MB, 1)
+        $when = $f.LastWriteTime.ToString('yyyy-MM-dd HH:mm')
+        $kind = if ($f.Name -match '\.sql$') { 'sql' } elseif ($f.Name -match '\.sql\.zip$') { 'sql.zip' } else { 'zip ' }
+        Write-Host ("  [{0}]  {1}  {2,-48} {3,9:N1} MB  {4}" -f ($i + 1), $kind, $f.Name, $mb, $when) -ForegroundColor White
+    }
+    Write-Host ''
+    $prompt = "  เลือกหมายเลข 1-$($files.Count) (คั่น , ได้หลายไฟล์ · all = ทั้งหมด · Enter = ยกเลิก)"
+    $ans = $null
+    try {
+        Write-Host $prompt -ForegroundColor Yellow
+        if ([Console]::IsInputRedirected) { $ans = [Console]::In.ReadLine() }
+        else { $ans = Read-Host '  > ' }
+    } catch { return $null }
+    if ($null -eq $ans -or [string]::IsNullOrWhiteSpace($ans)) { Write-Info 'ยกเลิก'; return $null }
+
+    $ans = "$ans".Trim()
+    if ($ans -match '^(?i)(all|a|\*)$') { return $files }
+
+    $picked = @()
+    foreach ($tok in ($ans -split '[,\s]+')) {
+        if (-not $tok) { continue }
+        $n = 0
+        if (-not [int]::TryParse($tok, [ref]$n) -or $n -lt 1 -or $n -gt $files.Count) {
+            Write-Err2 "ไม่ถูกต้อง: '$tok' (ต้องเป็นหมายเลข 1-$($files.Count))"
+            return $null
+        }
+        $picked += $files[$n - 1]
+    }
+    if ($picked.Count -eq 0) { Write-Err2 'ไม่ได้เลือกไฟล์'; return $null }
+    # dedupe ถ้าพิมพ์ซ้ำ
+    $picked = @($picked | Sort-Object FullName -Unique)
+    Write-Ok ("เลือก {0} ไฟล์: {1}" -f $picked.Count, (($picked | ForEach-Object Name) -join ', '))
+    return $picked
+}
+
+function Get-ExistingDatabaseNames($cfg, [string]$client) {
+    $r = Invoke-MysqlSql $cfg $client 'SHOW DATABASES;'
+    if ($r.ExitCode -ne 0) { return @() }
+    $skip = @('Database', 'information_schema', 'performance_schema', 'sys', 'mysql')
+    @(
+        $r.Out |
+            ForEach-Object { "$_".Trim() } |
+            Where-Object { $_ -and $_ -notin $skip -and $_ -notmatch '^(Warning|Using a password)' } |
+            Sort-Object -Unique
+    )
+}
+
+function Prompt-DbNameForImport($cfg, [string]$client, [string]$suggest = '', [string]$srcLabel = '') {
+    # ยังไม่ได้ระบุ dbname -> ถาม + โชว์รายชื่อ DB ที่มี (กันซ้ำ)
+    # คืนค่าชื่อ db ที่ถูกต้อง หรือ $null ถ้ายกเลิก
+    $existing = Get-ExistingDatabaseNames $cfg $client
+    Write-Head 'ตั้งชื่อ database ปลายทาง'
+    if ($srcLabel) { Write-Info "ไฟล์: $srcLabel" }
+    if ($existing.Count -gt 0) {
+        Write-Info ("ฐานข้อมูลที่มีอยู่แล้ว ({0} — เลือกชื่อซ้ำได้ แต่จะ import ลง DB เดิม):" -f $existing.Count)
+        $n = 0
+        foreach ($e in $existing) {
+            $n++
+            Write-Host ("   {0,2}) {1}" -f $n, $e) -ForegroundColor DarkGray
+        }
+    } else {
+        Write-Info 'ยังดึงรายชื่อ DB ไม่ได้ (server อาจเพิ่ง start) — พิมพ์ชื่อใหม่ได้เลย'
+    }
+    if (-not $suggest) { $suggest = 'import_db' }
+    Write-Host ''
+
+    while ($true) {
+        $def = if ($suggest) { "(Enter = $suggest)" } else { '' }
+        $ans = $null
+        try {
+            Write-Host "  พิมพ์ชื่อ database ปลายทาง $def (p = ยกเลิก)" -ForegroundColor Yellow
+            if ([Console]::IsInputRedirected) { $ans = [Console]::In.ReadLine() }
+            else { $ans = Read-Host '  > ' }
+        } catch { return $null }
+
+        if ($null -eq $ans) { Write-Info 'ยกเลิก'; return $null }
+        $ans = "$ans".Trim()
+        if ($ans -match '^(?i)(p|q|cancel|abort)$') { Write-Info 'ยกเลิก'; return $null }
+        if (-not $ans) { $ans = $suggest }
+
+        if ($ans -notmatch '^[A-Za-z0-9_][A-Za-z0-9_$]*$') {
+            Write-Err2 "ชื่อ db ผิดรูปแบบ: $ans (a-z 0-9 _ · ขึ้นต้นด้วยตัวอักษร/เลข)"
+            continue
+        }
+        if ($existing -contains $ans) {
+            Write-Warn2 " '$ans' มีอยู่แล้ว — import จะเพิ่ม/เขียนทับข้อมูลใน DB เดิม"
+            if (-not (Confirm-Action "ใช้ '$ans' ต่อไหม?")) { continue }
+        }
+        Write-Ok "dbname: $ans"
+        return $ans
+    }
+}
+
+function Resolve-ImportDbName($cfg, [string]$client, [string]$dbName, [string]$suggest = '', [string]$srcLabel = '') {
+    # ระบุ dbName ตอนเรียก -> ใช้เลย (เช็คซ้ำ + เตือน)
+    # ไม่ระบุ -> prompt (มีรายการ DB ให้ดู)
+    if ($dbName) {
+        if ($dbName -notmatch '^[A-Za-z0-9_][A-Za-z0-9_$]*$') {
+            throw "ชื่อ database ผิดรูปแบบ: $dbName (ใช้ a-z 0-9 _ ขึ้นต้นด้วยตัวอักษร/เลข)"
+        }
+        $existing = Get-ExistingDatabaseNames $cfg $client
+        if ($existing -contains $dbName) {
+            Write-Warn2 " dbname '$dbName' มีอยู่แล้ว — import จะเพิ่ม/เขียนทับข้อมูลใน DB เดิม"
+            if (-not (Confirm-Action "ใช้ '$dbName' ต่อไหม?")) { return $null }
+        } else {
+            Write-Info "dbname : $dbName (ใหม่ — จะ CREATE ให้)"
+        }
+        return $dbName
+    }
+    # non-interactive (pipe) -> ไม่ค้าง ใช้ suggest แทน
+    if ([Console]::IsInputRedirected) {
+        $auto = if ($suggest) { $suggest } else { 'import_db' }
+        if ($auto -notmatch '^[A-Za-z0-9_][A-Za-z0-9_$]*$') { $auto = 'import_db' }
+        Write-Info "dbname : $auto (non-interactive — ใช้ชื่อแนะนำ)"
+        return $auto
+    }
+    return Prompt-DbNameForImport $cfg $client $suggest $srcLabel
+}
+
 function Cmd-Import([string]$file, [string]$dbName, [string]$extra) {
-    # mode โฟลเดอร์: ย้ายทั้ง install เก่า -> root นี้ (ต้องเช็คก่อน — SQL path มีเงื่อนไข db รันอยู่)
+    # mode โฟลเดอร์:
+    #   - มี aptstack.ps1     -> ย้ายทั้ง install เก่า (Cmd-ImportRoot)
+    #   - มี .sql/.sql.zip/.zip -> ลิสต์หมายเลขให้เลือก
+    #       * ระบุ dbname ตอนเรียก -> ใช้ชื่อนั้นทุกไฟล์
+    #       * ไม่ระบุ -> prompt พร้อมโชว์รายชื่อ DB ที่มี (กันซ้ำ)
     if ($file) {
         $probe = $file
         if ($probe -notmatch '^[A-Za-z]:[\\/]') { $probe = Join-Path $Root $probe }
         if (Test-Path -LiteralPath $probe -PathType Container) {
-            Cmd-ImportRoot $probe ("$dbName $extra")
+            $probeFull = (Resolve-Path -LiteralPath $probe).Path
+            if (Test-Path -LiteralPath (Join-Path $probeFull 'aptstack.ps1')) {
+                Cmd-ImportRoot $probeFull ("$dbName $extra")
+                return
+            }
+            $cfg = Get-Config
+            if (Test-PortFree $cfg.dbPort) { throw "Database ยังไม่รัน (port $($cfg.dbPort)) — รัน: aptstack start" }
+            if ("$($cfg.dbMode)" -eq 'external') { Write-Warn2 'dbMode=external — import ไปยัง MySQL ภายนอก (XAMPP)' }
+            $client = Get-MysqlClient $cfg
+
+            $picked = Select-ImportFromFolder $probeFull
+            if (-not $picked) { return }
+
+            # ระบุ dbname ครั้งเดียวใช้กับทุกไฟล์ · ไม่ระบุ -> prompt ต่อไฟล์
+            $useCliDb = $null
+            if ($dbName) {
+                $useCliDb = Resolve-ImportDbName $cfg $client $dbName '' 'command line'
+                if (-not $useCliDb) { return }
+            }
+
+            $i = 0
+            foreach ($p in $picked) {
+                $i++
+                if ($picked.Count -gt 1) {
+                    Write-Host ''
+                    Write-Info ("=== [{0}/{1}] {2} ===" -f $i, $picked.Count, $p.Name)
+                }
+                $leaf = $p.Name
+                $suggest = ($leaf -replace '\.sql\.zip$', '' -replace '\.sql$', '' -replace '\.zip$', '')
+                if ($suggest -notmatch '^[A-Za-z0-9_]') { $suggest = 'db_' + $suggest -replace '[^A-Za-z0-9_]', '_' }
+                $oneDb = $useCliDb
+                if (-not $oneDb) {
+                    $oneDb = Resolve-ImportDbName $cfg $client $null $suggest $p.FullName
+                    if (-not $oneDb) { Write-Info 'ยกเลิกไฟล์นี้'; continue }
+                }
+                Cmd-Import $p.FullName $oneDb $extra
+            }
             return
         }
     }
@@ -2903,16 +3299,23 @@ function Cmd-Import([string]$file, [string]$dbName, [string]$extra) {
         Write-Info 'aptstack import <file.sql|.sql.zip> [dbname]'
         Write-Info 'aptstack import D:\dump\myapp.sql.zip myapp'
         Write-Host ''
+        Write-Info 'aptstack import <โฟลเดอร์ dump> [dbname]'
+        Write-Info '   ลิสต์ .sql/.sql.zip/.zip แล้วให้เลือกหมายเลข'
+        Write-Info '   เช่น aptstack import ..\_setup_appoint\ appoint052569'
+        Write-Info '   เลือกหลายไฟล์: 1,3  ·  ทั้งหมด: all  ·  Enter = ยกเลิก'
+        Write-Info '   ไม่ระบุ [dbname] -> ถามชื่อ + โชว์รายชื่อ DB ที่มี (กันซ้ำ)'
+        Write-Host ''
         Write-Info 'aptstack import <โฟลเดอร์ aptstack เก่า> [--no-downloads]'
         Write-Info '   ย้ายทั้ง install เก่า (stack/data/www/versions/config) เข้า root นี้'
-        Write-Info '   โค้ดใหม่คงเดิม · มี progress ทีละขั้น · data เก่าถูกกันไว้ data.preimport-*'
+        Write-Info '   (โฟลเดอร์ที่มี aptstack.ps1) · โค้ดใหม่คงเดิม · data เก่าถูกกันไว้ data.preimport-*'
         if ($cand.Count -gt 0) {
             Write-Host ''
             Write-Info 'ไฟล์ .sql/.sql.zip ที่เจอใกล้ ๆ:'
             foreach ($c in $cand) { Write-Info ("  {0}  ({1:N1} MB)" -f $c.FullName, ($c.Length / 1MB)) }
         }
         Write-Host ''
-        Write-Info 'dbName ถ้าไม่ระบุ => ใช้ชื่อไฟล์ (myapp.sql.zip -> myapp)'
+        Write-Info 'dbName ถ้าไม่ระบุ (โหมดไฟล์ตรง) => ใช้ชื่อไฟล์ (myapp.sql.zip -> myapp)'
+        Write-Info 'โหมดโฟลเดอร์ไม่ระบุ dbname => ถามพร้อมโชว์รายการ DB'
         Write-Info 'หรือถ้าไฟล์มี CREATE DATABASE / USE อยู่แล้ว -> ข้ามขั้นนี้'
         return
     }
@@ -3007,6 +3410,28 @@ function Cmd-Import([string]$file, [string]$dbName, [string]$extra) {
     }
     Write-Ok "import สำเร็จ -> $dbName  ($($tables.Count) ตาราง)"
     Write-Info ("ตาราง: " + (($tables | Select-Object -First 10) -join ', '))
+
+    # บันทึกแหล่งที่มาของ dump (ต้นทาง deploy/re-import)
+    try {
+        $srcItem = Get-Item $src
+        $srcHash = (Get-FileHash -Path $src -Algorithm SHA256).Hash
+        $metaDir = Join-Path $Root 'logs'
+        if (-not (Test-Path $metaDir)) { New-Item -ItemType Directory -Path $metaDir -Force | Out-Null }
+        $metaPath = Join-Path $metaDir ("import-$dbName.meta")
+        $meta = @"
+# aptstack import meta — แหล่ง dump ที่ import ล่าสุดของ database นี้
+kind=sql-import
+database=$dbName
+source=$src
+sha256=$srcHash
+size_bytes=$($srcItem.Length)
+imported=$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+tables=$($tables.Count)
+client=$client
+"@
+        Write-Utf8NoBom $metaPath ($meta + "`r`n")
+        Write-Info "บันทึกต้นทาง: $metaPath"
+    } catch { Write-Info 'บันทึก import meta ไม่สำเร็จ (ไม่บล็อกงาน)' }
     $nums = @($r1.Out + $r1.Err | Where-Object { "$_" -match '^\s*\d+\s*$' })
     if ($nums.Count -gt 0) { Write-Info ("rows ที่ insert: " + (($nums | Select-Object -First 8) -join ', ')) }
     Write-Info "phpMyAdmin: http://127.0.0.1:$($cfg.httpPort)/phpmyadmin/"
@@ -3776,6 +4201,7 @@ function Cmd-Config([string]$what, [string]$val) {
 
 function Cmd-Db([string]$action, [string]$a, [string]$b) {
     # aptstack db                     -> ดูสรุป user/DB ของ stack นี้
+    # aptstack db list [all]          -> รายชื่อ database + จำนวนตาราง/ขนาด
     # aptstack db set-root <password> -> ตั้งรหัส root (อัปเดต stack.json + phpMyAdmin ให้)
     # aptstack db add-user <user> <pass> -> เพิ่ม user ใหม่ (สิทธิ์เต็ม)
     $cfg = Get-Config
@@ -3796,9 +4222,88 @@ function Cmd-Db([string]$action, [string]$a, [string]$b) {
                 Write-Info 'phpMyAdmin ยังไม่ได้ติดตั้ง — aptstack add phpmyadmin latest'
             }
             Write-Host ''
+            Write-Info 'รายชื่อ database   : aptstack db list   (เพิ่ม system: aptstack db list all)'
             Write-Info 'ตั้งรหัส root     : aptstack db set-root <password>'
             Write-Info 'เพิ่ม user        : aptstack db add-user <user> <password>'
-            Write-Info 'ดูฐานข้อมูล       : aptstack report db'
+            Write-Info 'ดูขนาด/inventory : aptstack report db'
+            return
+        }
+        { $_ -in @('list', 'ls', 'databases', 'dbs') } {
+            $showSystem = ("$a".ToLower() -replace '^-{1,2}', '') -in @('all', 'system', 'full')
+            if (Test-PortFree $cfg.dbPort) { throw "DB ไม่รัน (port $($cfg.dbPort)) — aptstack start" }
+            $client = Get-MysqlClient $cfg
+
+            $sys = @('information_schema', 'performance_schema', 'sys', 'mysql')
+            $names = Get-ExistingDatabaseNames $cfg $client
+            if ($showSystem) {
+                $all = Invoke-MysqlSql $cfg $client 'SHOW DATABASES;'
+                $extra = @($all.Out | ForEach-Object { "$_".Trim() } | Where-Object { $_ -and $_ -ne 'Database' -and $_ -notmatch '^Using a password' })
+                $names = @(($names + $extra) | Sort-Object -Unique)
+            }
+
+            # ขนาด/จำนวนตารางจาก information_schema (DB ว่างจะไม่มี row -> default 0)
+            $sizeMap = @{}
+            $sql = 'SELECT table_schema AS s, COUNT(*) AS t, COALESCE(SUM(data_length+index_length),0) AS b FROM information_schema.tables GROUP BY table_schema;'
+            $sr = Invoke-MysqlSql $cfg $client $sql
+            if ($sr.ExitCode -eq 0) {
+                foreach ($line in $sr.Out) {
+                    if (-not $line) { continue }
+                    if ($line -match '^\s*s\s' -or $line -match '^-+$' -or $line -match 'table_schema') { continue }
+                    $parts = "$line" -split "`t"
+                    if ($parts.Count -ge 3) {
+                        $sizeMap[$parts[0].Trim()] = @{ Tables = [int]$parts[1]; Bytes = [long]$parts[2] }
+                    }
+                }
+            }
+
+            Write-Head "ฐานข้อมูล ($($names.Count))"
+            Write-Info "server : 127.0.0.1:$($cfg.dbPort)  mode=$($cfg.dbMode)  user=$($cfg.dbUser)"
+            if (-not $showSystem) { Write-Info '-system db (mysql/information_schema/...) — ดูครบ: aptstack db list all' }
+            Write-Host ''
+            if ($names.Count -eq 0) {
+                Write-Warn2 'ยังไม่มี database (หรือดึงรายชื่อไม่ได้)'
+                return
+            }
+
+            $pad = (($names | ForEach-Object { "$_".Length } | Measure-Object -Maximum).Maximum)
+            if ($pad -lt 10) { $pad = 10 }
+            $totalMb = 0.0
+            $totalTbl = 0
+            $i = 0
+            foreach ($n in $names) {
+                $i++
+                $st = $sizeMap[$n]
+                $tbl = if ($st) { [int]$st.Tables } else { 0 }
+                $mb = if ($st) { [math]::Round($st.Bytes / 1MB, 1) } else { 0 }
+                $totalMb += $mb
+                $totalTbl += $tbl
+                $tag = if ($n -in $sys) { ' [system]' } else { '' }
+                $color = if ($n -in $sys) { 'DarkGray' } else { 'White' }
+                $namePad = "$n".PadRight($pad)
+                Write-Host ("  {0,2}) {1}  {2,5} tables  {3,9:N1} MB{4}" -f $i, $namePad, $tbl, $mb, $tag) -ForegroundColor $color
+            }
+            Write-Host ''
+            Write-Ok ("รวม {0} database · {1} ตาราง · {2:N1} MB" -f $names.Count, $totalTbl, $totalMb)
+
+            # รายชื่อ user ทั้งหมด
+            $users = Get-DbUserRows $cfg $client
+            Write-Host ''
+            Write-Host "  DB users (ทั้งหมด) — $($users.Count) record" -ForegroundColor White
+            if ($users.Count -eq 0) {
+                Write-Info '(ดึง mysql.user ไม่ได้)'
+            } else {
+                $groups = $users | Group-Object User | Sort-Object Name
+                foreach ($g in $groups) {
+                    $hosts = @($g.Group | ForEach-Object { $_.Host }) -join ', '
+                    $tag = if ($g.Name -eq $cfg.dbUser) { '  [config]' } else { '' }
+                    Write-Host ("   {0,-16} @ {1}{2}" -f $g.Name, $hosts, $tag) -ForegroundColor Gray
+                }
+                Write-Info ("user ที่ตั้งใน stack.json : $($cfg.dbUser)  (pass ใน config)")
+            }
+            Write-Host ''
+            Write-Info 'inventory ละเอียด: aptstack report db'
+            Write-Info 'import ลงชื่อใหม่: aptstack import <file|folder> <dbname>'
+            Write-Info 'ดูสั้น ๆ อีกครั้ง: aptstack db-list · aptstack list'
             return
         }
         { $_ -in @('set-root', 'setroot', 'root-pass', 'rootpass') } {
@@ -3861,7 +4366,7 @@ function Cmd-Db([string]$action, [string]$a, [string]$b) {
             Write-Info 'login: เลือก user ใหม่ใน phpMyAdmin หรือ mysql CLI'
             return
         }
-        default { throw "ใช้: aptstack db [status|set-root <pass>|add-user <user> <pass>]" }
+        default { throw "ใช้: aptstack db [status|list [all]|set-root <pass>|add-user <user> <pass>]" }
     }
 }
 
@@ -4244,6 +4749,434 @@ function Cmd-Migrate($what, $to) {
     Cmd-Status
 }
 
+# ---------------------------------------------------------------- pull: ดึง config/db จาก version ต่ำ/ root อื่น
+function Read-Pick([string]$Prompt) {
+    Write-Host "  $Prompt" -ForegroundColor Yellow
+    try {
+        if ([Console]::IsInputRedirected) { return ([Console]::In.ReadLine()) }
+        return (Read-Host '  > ')
+    } catch { return $null }
+}
+
+function Parse-Pick([string]$s, [int]$max) {
+    # 'all' -> ทั้งหมด · '1,3' / '1 3' -> รายการ (1-based) · ผิด -> $null
+    $s = "$s".Trim().ToLower()
+    if (-not $s) { return $null }
+    if ($s -in @('all', 'a', '*')) { return @(1..$max) }
+    $out = @()
+    foreach ($t in ($s -split '[,\s]+')) {
+        if (-not $t) { continue }
+        $n = 0
+        if (-not [int]::TryParse($t, [ref]$n) -or $n -lt 1 -or $n -gt $max) { return $null }
+        $out += $n
+    }
+    if ($out.Count -eq 0) { return $null }
+    return @($out | Sort-Object -Unique)
+}
+
+function Test-PortUp([int]$Port) {
+    try {
+        $c = New-Object Net.Sockets.TcpClient
+        $t = $t2 = $c.BeginConnect('127.0.0.1', $Port, $null, $null)
+        $ok = $t.AsyncWaitHandle.WaitOne(250, $false)
+        $c.Close()
+        return [bool]$ok
+    } catch { return $false }
+}
+
+function Get-RootMysqlTools([string]$RootPath, $Cfg) {
+    # หา mariadb-dump/mariadb (หรือ mysqldump/mysql) ของ root ไหนก็ได้ — ไม่พึ่ง $Script:P
+    $base = Join-Path $RootPath 'stack\mysql'
+    $dirs = @()
+    $ver = "$($Cfg.mysql)"
+    if ($ver) { $d = Join-Path $base $ver; if (Test-Path $d) { $dirs += $d } }
+    if (Test-Path $base) { $dirs += @(Get-ChildItem $base -Directory -EA SilentlyContinue | ForEach-Object FullName) }
+    foreach ($d in ($dirs | Select-Object -Unique)) {
+        $dump = $null; $cli = $null
+        foreach ($n in @('bin\mariadb-dump.exe', 'bin\mysqldump.exe')) { $p = Join-Path $d $n; if (Test-Path $p) { $dump = $p; break } }
+        foreach ($n in @('bin\mariadb.exe', 'bin\mysql.exe')) { $p = Join-Path $d $n; if (Test-Path $p) { $cli = $p; break } }
+        if ($dump -and $cli) { return [pscustomobject]@{ Dir = $d; Dump = $dump; Client = $cli } }
+    }
+    return $null
+}
+
+function Get-ServerDatabases($Client, [int]$Port, [string]$User, [string]$Pass) {
+    $q = "SELECT table_schema, ROUND(IFNULL(SUM(data_length+index_length),0)/1024/1024,1), COUNT(DISTINCT table_name) FROM information_schema.tables WHERE table_schema NOT IN ('information_schema','performance_schema','mysql','sys') GROUP BY table_schema ORDER BY table_schema;"
+    $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $out = & $Client --skip-ssl -h 127.0.0.1 -P "$Port" --protocol=tcp --default-character-set=utf8mb4 -u $User "-p$Pass" -N -B -e $q 2>$null
+    $ErrorActionPreference = $old
+    $list = @()
+    foreach ($l in @($out)) {
+        $c = "$l" -split "`t"
+        if ($c.Count -ge 3 -and $c[0]) { $list += [pscustomobject]@{ Name = $c[0]; MB = [double]$c[1]; Tables = [int]$c[2] } }
+    }
+    return $list
+}
+
+function Invoke-FileProgress([string]$Act, $Proc, [string]$File, [double]$EstMB) {
+    # poll ขนาดไฟล์ระหว่าง dump -> % + MB + อัตรา + ETA (ทุก 2 วิพิมพ์บรรทัด log ด้วย)
+    $sw = [Diagnostics.Stopwatch]::StartNew(); $lastTxt = -2.0; $pct = -1
+    while (-not $Proc.HasExited) {
+        Start-Sleep -Milliseconds 400
+        $cur = 0.0
+        if (Test-Path -LiteralPath $File) { $cur = ((Get-Item -LiteralPath $File).Length / 1MB) }
+        $eta = ''; $p = -1
+        if ($EstMB -gt 0.5) {
+            $p = [int][Math]::Min(100, [Math]::Round($cur / $EstMB * 100))
+            if ($sw.Elapsed.TotalSeconds -gt 1.5) {
+                $rate = $cur / $sw.Elapsed.TotalSeconds
+                if ($rate -gt 0.01) { $sec = ($EstMB - $cur) / $rate; if ($sec -gt 0 -and $sec -lt 86400) { $eta = "เหลือ ~$([int]$sec) วิ" } }
+            }
+        }
+        if ($p -ge 0 -and $p -ne $pct) {
+            $pct = $p
+            Write-Progress -Activity $Act -PercentComplete $pct -Status "$pct% · $([math]::Round($cur,1))/$([math]::Round($EstMB,1)) MB $eta"
+        }
+        if ($sw.Elapsed.TotalSeconds - $lastTxt -ge 2) {
+            $lastTxt = $sw.Elapsed.TotalSeconds
+            if ($p -ge 0) { Write-Info ("    ... {0}% · {1:N1}/{2:N1} MB · {3}" -f $pct, $cur, $EstMB, $eta) }
+            else { Write-Info ("    ... {0:N1} MB · {1:N0} วิ" -f $cur, $sw.Elapsed.TotalSeconds) }
+        }
+    }
+    Write-Progress -Activity $Act -Completed
+    $sw.Stop()
+}
+
+function Invoke-ProcTicker([string]$Act, $Proc, [string]$Label) {
+    # import: ไม่รู้ % จริง -> เอา item-level + นับวินาที (บอก i/N ให้รู้ว่าอีกนานไหม)
+    $sw = [Diagnostics.Stopwatch]::StartNew(); $last = -2.0
+    while (-not $Proc.HasExited) {
+        Start-Sleep -Milliseconds 400
+        if ($sw.Elapsed.TotalSeconds - $last -ge 2) {
+            $last = $sw.Elapsed.TotalSeconds
+            Write-Progress -Activity $Act -Status ("{0} · {1:N0} วิ" -f $Label, $sw.Elapsed.TotalSeconds)
+            Write-Info ("    ... {0} · {1:N0} วิ" -f $Label, $sw.Elapsed.TotalSeconds)
+        }
+    }
+    Write-Progress -Activity $Act -Completed
+    $sw.Stop()
+}
+
+function Cmd-Pull($kind, $target, $extra) {
+    # ดึง config + ฐานข้อมูล (SQL) จาก version ต่ำกว่า / aptstack root อื่น -> version สูง (target)
+    # flow: list แหล่งรวม -> เลือกกลุ่ม (config/databases/dumps) -> เลือกรายตัวหรือ all
+    #       -> ดูแผนก่อนยืนยัน -> execute พร้อม %/ETA ต่อขั้น
+    if ("$kind".ToLower() -ne 'mysql') { throw 'ใช้: aptstack pull mysql <version สูง> [path aptstack root อื่น]' }
+    if (-not $target) { throw 'ต้องระบุ version ปลายทาง (สูง): aptstack pull mysql 11.4.13' }
+    $cfg = Get-Config
+    $tgt = Resolve-MySql $target
+    if (-not $tgt) { throw "ไม่พบ engine '$target' ใน root นี้ — ติดตั้งก่อน: aptstack add mysql $target" }
+    $tgtVer = if ($tgt.Version) { $tgt.Version } else { $tgt.Name }
+
+    # ---- 1) เก็บรายชื่อ root ทั้งหมด (root นี้ + siblings + path ที่ระบุ) ----
+    $roots = New-Object System.Collections.ArrayList
+    [void]$roots.Add($Root)
+    $parent = Split-Path $Root -Parent
+    foreach ($d in @(Get-ChildItem $parent -Directory -EA SilentlyContinue)) {
+        if ($d.FullName.TrimEnd('\') -ieq $Root.TrimEnd('\')) { continue }
+        if ((Test-Path (Join-Path $d.FullName 'aptstack.ps1')) -and (Test-Path (Join-Path $d.FullName 'config\stack.json'))) { [void]$roots.Add($d.FullName) }
+    }
+    if ($extra) {
+        $ex = "$extra"; if ($ex -notmatch '^[A-Za-z]:[\\/]') { $ex = Join-Path $Root $ex }
+        if (Test-Path (Join-Path $ex 'aptstack.ps1')) {
+            $exFull = (Resolve-Path $ex).Path
+            if (@($roots) -notcontains $exFull) { [void]$roots.Add($exFull) }
+        } else { Write-Warn2 "ไม่พบ aptstack root ที่: $ex" }
+    }
+
+    # ---- 2) สำรวจแต่ละ root: config, server รันอยู่ไหม, dumps, engines ----
+    $rootInfo = @(); $dumpFiles = @()
+    foreach ($r in @($roots)) {
+        $c = $null
+        try { $c = (Get-Content (Join-Path $r 'config\stack.json') -Raw -EA Stop | ConvertFrom-Json) } catch { }
+        $port = if ($c -and $c.dbPort) { [int]$c.dbPort } else { 3306 }
+        $up = Test-PortUp $port
+        $tools = Get-RootMysqlTools $r $c
+        $vers = @()
+        $mb = Join-Path $r 'stack\mysql'
+        if (Test-Path $mb) { $vers = @(Get-ChildItem $mb -Directory -EA SilentlyContinue | ForEach-Object Name) }
+        $dfs = @()
+        $dd = Join-Path $r 'data\dumps'
+        if (Test-Path $dd) { $dfs = @(Get-ChildItem $dd -File -Filter *.sql -EA SilentlyContinue | Sort-Object LastWriteTime -Descending) }
+        $isSelf = ($r.TrimEnd('\') -ieq $Root.TrimEnd('\'))
+        $rootInfo += [pscustomobject]@{ Root = $r; Cfg = $c; Port = $port; Up = $up; Tools = $tools; Versions = $vers; IsSelf = $isSelf; Dumps = $dfs }
+        foreach ($f in $dfs) { $dumpFiles += [pscustomobject]@{ File = $f; SrcRoot = $r; SrcTag = $(if ($isSelf) { '(root นี้)' } else { $r }) } }
+    }
+
+    # ---- 3) สร้างกลุ่ม ----
+    Write-Head 'แหล่งที่ดึงได้'
+    foreach ($ri in $rootInfo) {
+        $tag = if ($ri.IsSelf) { '(root นี้)' } else { $ri.Root }
+        $st = if ($ri.Up) { "server รันอยู่ :$($ri.Port)" } else { "server ดับ" }
+        $eng = if ($ri.Versions.Count) { 'engine: ' + ($ri.Versions -join ', ') } else { 'engine: -' }
+        Write-Info ("  {0,-58} {1} · {2}" -f $tag, $st, $eng)
+        if ($ri.Dumps.Count -gt 0) { Write-Info ("      dumps: {0} ไฟล์" -f $ri.Dumps.Count) }
+    }
+    Write-Host ''
+
+    # กลุ่ม config = จาก root อื่นเท่านั้น (root นี้ = config ปัจจุบัน ไม่มีอะไรให้ดึง)
+    $cfgFields = @('dbPort', 'dbUser', 'dbPass', 'dbMode')
+    $cfgSources = @($rootInfo | Where-Object { (-not $_.IsSelf) -and $_.Cfg })
+    # กลุ่ม databases = (a) server ที่รันอยู่ทุก root (b) engine ต่ำกว่า/อื่นใน root นี้ (จะ start ชั่วคราว)
+    $liveSrc = @($rootInfo | Where-Object { $_.Up -and $_.Tools -and (-not $_.IsSelf) })
+    $selfEngines = @()
+    $selfInfo = $rootInfo | Where-Object { $_.IsSelf } | Select-Object -First 1
+    if ($selfInfo) { $selfEngines = @($selfInfo.Versions | Where-Object { $_ -ne $tgtVer }) }
+
+    $groups = @()
+    if ($cfgSources.Count -gt 0) { $groups += 'config' }
+    if ($liveSrc.Count -gt 0 -or $selfEngines.Count -gt 0) { $groups += 'databases' }
+    if ($dumpFiles.Count -gt 0) { $groups += 'dumps' }
+    if ($groups.Count -eq 0) { Write-Info 'ไม่พบแหล่งอะไรเลย (root อื่นไม่มี config/dumps, server ก็ไม่รัน)'; return }
+
+    Write-Head 'เลือกกลุ่มที่จะดึง'
+    for ($i = 0; $i -lt $groups.Count; $i++) {
+        $desc = switch ($groups[$i]) {
+            'config'    { 'ค่า db (port/user/pass/mode) จาก root อื่น' }
+            'databases' { 'ฐานข้อมูล — จาก server ที่รันอยู่ + engine ต่ำกว่าใน root นี้ (list รายตัว ขั้นถัดไป)' }
+            'dumps'     { 'ไฟล์ *.sql ที่มีอยู่ (list รายไฟล์ ขั้นถัดไป)' }
+        }
+        Write-Info ("  {0}) {1,-10} — {2}" -f ($i + 1), $groups[$i], $desc)
+    }
+    $gAns = Read-Pick ("พิมพ์หมายเลขคั่นด้วย , หรือ all (Enter = ยกเลิก)")
+    if ([string]::IsNullOrWhiteSpace($gAns)) { Write-Info 'ยกเลิก'; return }
+    $gPick = Parse-Pick $gAns $groups.Count
+    if (-not $gPick) { Write-Err2 "เลือกไม่ถูกต้อง: '$gAns'"; return }
+    $picked = @($gPick | ForEach-Object { $groups[$_ - 1] })
+
+    $plan = New-Object System.Collections.ArrayList   # ขั้นตอนที่จะทำ (แผน)
+    $cfgChoice = $null; $cfgFieldPick = $null; $dbPicks = @(); $filePicks = @()
+
+    # ---- 4a) config: เลือกแหล่ง (ถ้ามีหลาย root) แล้วเลือก field ทีละตัว ----
+    if ($picked -contains 'config') {
+        Write-Head 'เลือกแหล่ง config'
+        for ($i = 0; $i -lt $cfgSources.Count; $i++) {
+            Write-Info ("  {0}) {1}  (port={2} user={3} mode={4})" -f ($i + 1), $cfgSources[$i].Root, $cfgSources[$i].Cfg.dbPort, $cfgSources[$i].Cfg.dbUser, $cfgSources[$i].Cfg.dbMode)
+        }
+        $cAns = Read-Pick 'พิมพ์หมายเลข (Enter = ยกเลิก)'
+        if ([string]::IsNullOrWhiteSpace($cAns)) { Write-Info 'ยกเลิก'; return }
+        $cPick = Parse-Pick $cAns $cfgSources.Count
+        if (-not $cPick -or $cPick.Count -ne 1) { Write-Err2 'ต้องเลือกแหล่ง config แหล่งเดียว'; return }
+        $cfgChoice = $cfgSources[$cPick[0] - 1]
+        $avail = @($cfgFields | Where-Object { $null -ne $cfgChoice.Cfg.$_ })
+        Write-Host ''
+        Write-Host '  เลือก field ที่จะดึง:' -ForegroundColor White
+        for ($i = 0; $i -lt $avail.Count; $i++) {
+            $f = $avail[$i]
+            $old = "$($cfg.$f)"; $new = "$($cfgChoice.Cfg.$f)"
+            $mark = if ($old -ceq $new) { ' (เท่าเดิม)' } else { "  $old -> $new" }
+            Write-Info ("  {0}) {1}{2}" -f ($i + 1), $f, $mark)
+        }
+        $fAns = Read-Pick 'พิมพ์หมายเลขคั่นด้วย , หรือ all (Enter = ยกเลิก)'
+        if ([string]::IsNullOrWhiteSpace($fAns)) { Write-Info 'ยกเลิก'; return }
+        $fPick = Parse-Pick $fAns $avail.Count
+        if (-not $fPick) { Write-Err2 "เลือกไม่ถูกต้อง: '$fAns'"; return }
+        $cfgFieldPick = @($fPick | ForEach-Object { $avail[$_ - 1] })
+        [void]$plan.Add([pscustomobject]@{ Kind = 'config'; Label = "ใช้ " + ($cfgFieldPick -join ',') + " จาก $($cfgChoice.Root)"; Act = 'config' })
+    }
+
+    # ---- 4b) databases: list รายตัว (live servers + engine ต่ำกว่าใน root นี้) ----
+    if ($picked -contains 'databases') {
+        Write-Head 'list ฐานข้อมูลที่ดึงได้'
+        $dbOptions = @()
+        foreach ($ls in $liveSrc) {
+            $dbs = Get-ServerDatabases $ls.Tools.Client $ls.Port $ls.Cfg.dbUser $ls.Cfg.dbPass
+            foreach ($d in $dbs) { $dbOptions += [pscustomobject]@{ Source = 'live'; RootInfo = $ls; Name = $d.Name; MB = $d.MB; Tables = $d.Tables; Note = "server รันอยู่ :$($ls.Port)" } }
+        }
+        foreach ($ev in $selfEngines) {
+            # datadir -> รายชื่อ db (ยังไม่ start — ชื่อจากโฟลเดอร์)
+            $vh = $null
+            try { $vh = Resolve-MySql $ev } catch { }
+            $dd = if ($vh) { Get-DataDir $vh } else { Join-Path $Script:P.Data $ev }
+            if (Test-Path $dd) {
+                $sys = @('mysql', 'information_schema', 'performance_schema', 'sys', 'phpmyadmin', 'lost+found')
+                foreach ($sd in @(Get-ChildItem $dd -Directory -EA SilentlyContinue)) {
+                    if ($sys -contains $sd.Name) { continue }
+                    $sz = Get-FolderSizeMB $sd.FullName
+                    $dbOptions += [pscustomobject]@{ Source = 'engine'; Engine = $ev; Name = $sd.Name; MB = $sz; Tables = -1; Note = "engine $ev (จะ start ชั่วคราว)" }
+                }
+            }
+        }
+        if ($dbOptions.Count -eq 0) { Write-Info '  (ไม่พบฐานข้อมูล — server ทั้งหมดดับ และ datadir ว่าง)' }
+        for ($i = 0; $i -lt $dbOptions.Count; $i++) {
+            $o = $dbOptions[$i]
+            $tb = if ($o.Tables -ge 0) { "$($o.Tables) ตาราง" } else { 'ตาราง ?' }
+            Write-Info ("  {0,2}) {1,-28} {2,8:N1} MB  {3,-22} {4}" -f ($i + 1), $o.Name, $o.MB, $o.Note, $tb)
+        }
+        if ($dbOptions.Count -gt 0) {
+            $dAns = Read-Pick 'เลือกฐานข้อมูล (หมายเลขคั่นด้วย , หรือ all — Enter = ข้าม)'
+            if (-not [string]::IsNullOrWhiteSpace($dAns)) {
+                $dPick = Parse-Pick $dAns $dbOptions.Count
+                if (-not $dPick) { Write-Err2 "เลือกไม่ถูกต้อง: '$dAns'"; return }
+                $dbPicks = @($dPick | ForEach-Object { $dbOptions[$_ - 1] })
+            }
+        }
+    }
+
+    # ---- 4c) dumps: list รายไฟล์ ----
+    if ($picked -contains 'dumps' -and $dumpFiles.Count -gt 0) {
+        Write-Head 'list ไฟล์ .sql'
+        for ($i = 0; $i -lt $dumpFiles.Count; $i++) {
+            $f = $dumpFiles[$i]
+            Write-Info ("  {0,2}) {1,-52} {2,7:N1} MB  {3}  {4:yyyy-MM-dd}" -f ($i + 1), $f.File.Name, ($f.File.Length / 1MB), $f.SrcTag, $f.File.LastWriteTime)
+        }
+        $sAns = Read-Pick 'เลือกไฟล์ (หมายเลขคั่นด้วย , หรือ all — Enter = ข้าม)'
+        if (-not [string]::IsNullOrWhiteSpace($sAns)) {
+            $sPick = Parse-Pick $sAns $dumpFiles.Count
+            if (-not $sPick) { Write-Err2 "เลือกไม่ถูกต้อง: '$sAns'"; return }
+            $filePicks = @($sPick | ForEach-Object { $dumpFiles[$_ - 1] })
+        }
+    }
+
+    # ---- 5) สรุปแผน ----
+    # จัดลำดับ: config -> dump จาก server รันอยู่ -> (สลับ engine ต่ำ dump) -> สลับ target -> import
+    $liveDbPicks = @($dbPicks | Where-Object { $_.Source -eq 'live' })
+    $engDbPicks = @($dbPicks | Where-Object { $_.Source -eq 'engine' } | Group-Object Engine)
+    $needSwitchToTarget = ("$cfg.mysql" -ne "$tgtVer")
+    $willImport = ($dbPicks.Count -gt 0 -or $filePicks.Count -gt 0)
+    foreach ($g in $engDbPicks) {
+        [void]$plan.Add([pscustomobject]@{ Kind = 'switch'; Label = "start engine ต้นทาง $($g.Name) (ชั่วคราว — หยุดตัวปัจจุบันก่อน)"; Act = 'start-src'; Engine = $g.Name })
+        foreach ($d in $g.Group) {
+            [void]$plan.Add([pscustomobject]@{ Kind = 'dump'; Label = "dump $($d.Name) จาก $($d.Engine) (~$($d.MB) MB)"; Act = 'dump'; Db = $d.Name; EstMB = [math]::Max(1, $d.MB * 1.1); SrcKind = 'engine'; Engine = $d.Engine; SrcCfg = $cfg; SrcPort = $cfg.dbPort })
+    }
+    }
+    foreach ($g in ($liveDbPicks | Group-Object Root)) {
+        foreach ($d in $g.Group) {
+            $ri = $d.RootInfo
+            [void]$plan.Add([pscustomobject]@{ Kind = 'dump'; Label = "dump $($d.Name) จาก $($ri.Root) (~$($d.MB) MB)"; Act = 'dump'; Db = $d.Name; EstMB = [math]::Max(1, $d.MB * 1.1); SrcKind = 'live'; SrcCfg = $ri.Cfg; SrcPort = $ri.Port })
+        }
+    }
+    foreach ($fp in $filePicks) {
+        [void]$plan.Add([pscustomobject]@{ Kind = 'stage'; Label = "ใช้ไฟล์เดิม: $($fp.File.Name) ($([math]::Round($fp.File.Length/1MB,1)) MB)"; Act = 'stage'; File = $fp.File.FullName })
+    }
+    if ($engDbPicks.Count -gt 0) {
+        [void]$plan.Add([pscustomobject]@{ Kind = 'stop'; Label = 'หยุด engine ต้นทาง (ชั่วคราว)'; Act = 'stop-src' })
+    }
+    if ($willImport -and ($needSwitchToTarget -or $engDbPicks.Count -gt 0 -or -not (Test-PortUp ([int]$cfg.dbPort)))) {
+        [void]$plan.Add([pscustomobject]@{ Kind = 'switch'; Label = "สลับไป engine ปลายทาง $($tgtVer) + start (ใช้ port $($cfg.dbPort))"; Act = 'start-tgt' })
+    }
+    $importItems = @()
+    foreach ($p in @($plan)) { if ($p.Act -eq 'dump') { $importItems += [pscustomobject]@{ Name = $p.Db } } }
+    foreach ($fp in $filePicks) { $importItems += [pscustomobject]@{ Name = $fp.File.BaseName; File = $fp.File.FullName } }
+    # ของ dump สร้างไฟล์ภายหลัง — ผูก path ตอน execute (dumpFile field เติมตอน dump)
+    $i = 0
+    foreach ($it in $importItems) { $i++; [void]$plan.Add([pscustomobject]@{ Kind = 'import'; Label = "นำเข้า $($it.Name)"; Act = 'import'; Db = $it.Name; SrcFile = $it.File }) }
+
+    if ($plan.Count -eq 0) { Write-Info 'ไม่ได้เลือกอะไร (หรือทุกอย่างเหมือนเดิม) — จบ'; return }
+
+    Write-Host ''
+    Write-Head "แผนที่จะทำ ($($plan.Count) ขั้น) — ปลายทาง: $($tgtVer)"
+    $n = 0
+    foreach ($p in $plan) { $n++; Write-Info ("  {0,2}. [{1,-6}] {2}" -f $n, $p.Kind, $p.Label) }
+    Write-Host ''
+    if (-not (Confirm-Action "พิมพ์ y เพื่อเริ่ม ($($plan.Count) ขั้น)")) { Write-Info 'ยกเลิก'; return }
+
+    # ---- 6) execute พร้อม progress + ETA รวม ----
+    $tmpDumpDir = Join-Path $Script:P.Dumps ('pull-' + (Get-Date -Format 'yyyyMMdd_HHmmss'))
+    New-Item -ItemType Directory $tmpDumpDir -Force | Out-Null
+    $done = 0; $secList = @(); $swAll = [Diagnostics.Stopwatch]::StartNew()
+    $curEngineStarted = $null   # engine ที่เรา start ชั่วคราว (root นี้)
+    $results = @()
+    $idx = 0
+    foreach ($p in $plan) {
+        $idx++
+        $act = "pull mysql — [$idx/$($plan.Count)] $($p.Label)"
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            switch ($p.Act) {
+                'config' {
+                    foreach ($f in $cfgFieldPick) { $cfg.$f = $cfgChoice.Cfg.$f }
+                    Save-Config $cfg
+                    Write-Ok ("config แล้ว: {0}" -f ($cfgFieldPick -join ', '))
+                }
+                'start-src' {
+                    if (Test-Running 'mysql') { Stop-Db }
+                    $cfg = Get-Config; $cfg.mysql = $p.Engine; Save-Config $cfg
+                    if (-not (Start-Db (Get-Config))) { throw "start engine ต้นทาง $($p.Engine) ไม่สำเร็จ" }
+                    $curEngineStarted = $p.Engine
+                    Write-Ok "engine ต้นทาง $($p.Engine) รันแล้ว"
+                }
+                'dump' {
+                    $tools = Get-RootMysqlTools $Root $cfg
+                    if (-not $tools) { throw 'ไม่พบ mariadb-dump ใน root นี้' }
+                    $outFile = Join-Path $tmpDumpDir (($p.Db -replace '[^\w.-]', '_') + '.sql')
+                    $dargs = @('--skip-ssl', '-h', '127.0.0.1', '-P', "$($p.SrcPort)", '--protocol=tcp', '--default-character-set=utf8mb4',
+                               '-u', $p.SrcCfg.dbUser, "-p$($p.SrcCfg.dbPass)", '--single-transaction', '--routines', '--triggers',
+                               '--databases', $p.Db)
+                    $oldEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+                    $pr = Start-Process -FilePath $tools.Dump -ArgumentList $dargs -RedirectStandardOutput $outFile -RedirectStandardError (Join-Path $tmpDumpDir 'dump-err.txt') -PassThru -NoNewWindow
+                    Invoke-FileProgress $act $pr $outFile $p.EstMB
+                    $ErrorActionPreference = $oldEap
+                    if ($pr.ExitCode -ne 0 -or -not (Test-Path $outFile)) { throw "dump $($p.Db) ล้มเหลว (exit $($pr.ExitCode))" }
+                    $p.DumpFile = $outFile
+                    # ผูกไฟล์ให้ขั้น import ของ db นี้
+                    foreach ($q in $plan) { if ($q.Act -eq 'import' -and -not $q.SrcFile -and $q.Db -eq $p.Db) { $q.SrcFile = $outFile } }
+                    Write-Ok ("dump {0} สำเร็จ ({1:N1} MB)" -f $p.Db, ((Get-Item $outFile).Length / 1MB))
+                }
+                'stage' {
+                    Write-Ok "ใช้ไฟล์เดิม: $(Split-Path $p.File -Leaf)"
+                }
+                'stop-src' {
+                    Stop-Db; $curEngineStarted = $null
+                    Write-Ok 'หยุด engine ต้นทางแล้ว'
+                }
+                'start-tgt' {
+                    if (Test-Running 'mysql') { Stop-Db }
+                    $cfg = Get-Config; $cfg.mysql = $tgtVer; Save-Config $cfg
+                    if (-not (Start-Db (Get-Config))) {
+                        throw "start engine ปลายทาง $tgtVer ไม่สำเร็จ (พอร์ต $($cfg.dbPort)) — ของเดิมยังอยู่ครบ ย้อนกลับ: aptstack use mysql แล้ว start"
+                    }
+                    Write-Ok "engine ปลายทาง $tgtVer รันแล้ว"
+                }
+                'import' {
+                    if (-not $p.SrcFile -or -not (Test-Path $p.SrcFile)) { throw "ไม่พบไฟล์สำหรับนำเข้า $($p.Db)" }
+                    $tools = Get-RootMysqlTools $Root $cfg
+                    if (-not $tools) { throw 'ไม่พบ client ของ engine ปลายทาง' }
+                    $estMB = [math]::Round(((Get-Item $p.SrcFile).Length / 1MB), 1)
+                    $rargs = @('--skip-ssl', '-h', '127.0.0.1', '-P', "$($cfg.dbPort)", '--protocol=tcp', '--default-character-set=utf8mb4',
+                               '-u', $cfg.dbUser, "-p$($cfg.dbPass)", '--force')
+                    $oldEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+                    $pr = Start-Process -FilePath $tools.Client -ArgumentList $rargs -RedirectStandardInput $p.SrcFile -RedirectStandardOutput (Join-Path $tmpDumpDir 'import-out.txt') -RedirectStandardError (Join-Path $tmpDumpDir 'import-err.txt') -PassThru -NoNewWindow
+                    Invoke-ProcTicker $act $pr ("$($p.Label) · $estMB MB")
+                    $ErrorActionPreference = $oldEap
+                    if ($pr.ExitCode -ne 0) {
+                        $e = if (Test-Path (Join-Path $tmpDumpDir 'import-err.txt')) { ((Get-Content (Join-Path $tmpDumpDir 'import-err.txt') -Tail 2) -join ' ') } else { '' }
+                        throw "นำเข้า $($p.Db) ไม่สมบูรณ์ (exit $($pr.ExitCode)) $e"
+                    }
+                    Write-Ok "นำเข้า $($p.Db) สำเร็จ"
+                }
+            }
+            $results += [pscustomobject]@{ Ok = $true; Label = $p.Label }
+        } catch {
+            $results += [pscustomobject]@{ Ok = $false; Label = $p.Label; Err = "$($_.Exception.Message)" }
+            Write-Err2 $results[-1].Err
+            Write-Warn2 'แผนหยุดตรงนี้ — ไฟล์ที่ dump ไว้ยังอยู่ กู้/ทำต่อด้วย: aptstack import <file.sql>'
+            break
+        } finally { Write-Progress -Activity $act -Completed }
+        $sw.Stop(); $swAll.Stop()
+        $done++
+        $secList += $sw.Elapsed.TotalSeconds
+        $avg = ($secList | Measure-Object -Average).Average
+        $eta = [math]::Max(0, [int]($avg * ($plan.Count - $idx)))
+        Write-Info ("  ความคืบหน้า {0}/{1} ขั้น ({2}%) · ใช้ไป {3:N0} วิ · เฉลี่ย {4:N1} วิ/ขั้น · เหลือ ~{5} วิ" -f $idx, $plan.Count, [int]($idx / $plan.Count * 100), $swAll.Elapsed.TotalSeconds, $avg, $eta)
+        $swAll.Start()
+    }
+
+    # ---- 7) สรุปผล ----
+    Write-Host ''
+    Write-Head "pull เสร็จ — สำเร็จ $((@($results | Where-Object Ok)).Count)/$($plan.Count) ขั้น · ใช้เวลา $([int]$swAll.Elapsed.TotalSeconds) วิ"
+    foreach ($r in $results) {
+        if ($r.Ok) { Write-Ok $r.Label } else { Write-Err2 ("{0} — {1}" -f $r.Label, $r.Err) }
+    }
+    Write-Info "ไฟล์ dump เก็บไว้: $tmpDumpDir"
+    Write-Host ''
+    Write-Info 'ขั้นถัดไป:'
+    Write-Info "  aptstack status              ดู engine ปลายทาง ($tgtVer) + พอร์ต"
+    Write-Info '  aptstack doctor              ตรวจความเรียบร้อย'
+    Write-Info '  aptstack logs mysql          ถ้ามี warning ตอน restore'
+    if ($cfgChoice) { Write-Info '  (config ถูกเปลี่ยนแล้ว — ดูด้วย: aptstack config)' }
+}
+
 function Cmd-Run {
     # dev console: start แบบ manual (ไม่ต้อง register Windows Service) + บล็อกหน้าจอ
     # กด Ctrl+C -> finally จะ stop ทั้งหมด (production: aptstack service install)
@@ -4272,13 +5205,333 @@ function Cmd-Run {
     }
 }
 
+# ---------------------------------------------------------------- origin / diff
+function Resolve-OriginPath([string]$source) {
+    # คืน absolute path ของต้นทางจาก .aptstack-source
+    # รองรับ: absolute | relative กับ Root | relative กับ parent (เช่น ..\_setup_inet\...)
+    if ([string]::IsNullOrWhiteSpace($source)) { return $null }
+    $s = $source.Trim().Trim('"')
+    try {
+        if ($s -match '^[A-Za-z]:[\\/]') {
+            return [IO.Path]::GetFullPath($s)
+        }
+        $cands = @()
+        $cands += [IO.Path]::GetFullPath((Join-Path $Root $s))
+        $parent = Split-Path -Parent $Root
+        if ($parent) { $cands += [IO.Path]::GetFullPath((Join-Path $parent $s)) }
+        $cwd = (Get-Location).Path
+        if ($cwd) { $cands += [IO.Path]::GetFullPath((Join-Path $cwd $s)) }
+        foreach ($c in $cands) {
+            if (Test-Path -LiteralPath $c) { return $c }
+        }
+        return [IO.Path]::GetFullPath((Join-Path $Root $s))
+    } catch {
+        return $s
+    }
+}
+
+function Get-AppOriginInfo($app) {
+    # $app = object from Get-AppVersions / Resolve-App
+    if (-not $app) { return $null }
+    $sm = Get-SourceMeta $app.Dir
+    $raw = if ($sm) { "$($sm['source'])" } else { '' }
+    $kind = if ($sm -and $sm['kind']) { $sm['kind'] } else { 'app' }
+    $installed = if ($sm -and $sm['installed']) { $sm['installed'] } else { '' }
+    $abs = Resolve-OriginPath $raw
+    $exists = if ($abs) { [bool](Test-Path -LiteralPath $abs) } else { $false }
+    $type = 'none'
+    if ($exists) {
+        $type = if (Test-Path -LiteralPath $abs -PathType Container) { 'dir' }
+                elseif ($abs -match '\.zip$') { 'zip' }
+                else { 'file' }
+    }
+    return [pscustomobject]@{
+        App         = $app.Name
+        Dir         = $app.Dir
+        Family      = $app.Family
+        Kind        = $kind
+        SourceRaw   = $raw
+        SourceAbs   = $abs
+        SourceExists = $exists
+        SourceType  = $type
+        Installed   = $installed
+    }
+}
+
+function Read-MenuChoice([string]$prompt, [int]$max) {
+    try {
+        if ([Console]::IsInputRedirected) { $ans = [Console]::In.ReadLine() }
+        else { $ans = Read-Host $prompt }
+    } catch { return $null }
+    if ($null -eq $ans -or [string]::IsNullOrWhiteSpace($ans)) { return $null }
+    $ans = "$ans".Trim().Trim('"')
+    $n = 0
+    if ([int]::TryParse($ans, [ref]$n) -and $n -ge 1 -and $n -le $max) { return $n }
+    return $null
+}
+
+function Select-DiffApp {
+    # เมนูเลือก app สำหรับ aptstack diff — แสดง origin ทุกแถว
+    $apps = @(Get-AppVersions)
+    if ($apps.Count -eq 0) {
+        Write-Err2 'ยังไม่มี app — ใช้: aptstack add app <folder|zip>'
+        return $null
+    }
+    $cur = Get-CurrentAppName
+    Write-Head 'เลือก app สำหรับ diff (เทียบ ต้นทาง vs versions\)'
+    Write-Host ''
+    $infos = @()
+    for ($i = 0; $i -lt $apps.Count; $i++) {
+        $a = $apps[$i]
+        $oi = Get-AppOriginInfo $a
+        $infos += $oi
+        $mark = if ($cur -eq $a.Name) { '*' } else { ' ' }
+        $srcShort = if ($oi.SourceRaw) { Split-Path $oi.SourceRaw -Leaf } else { '(no origin)' }
+        if (-not $srcShort) { $srcShort = $oi.SourceRaw }
+        $ok = if ($oi.SourceExists) { 'OK' } else { 'MISS' }
+        $okCol = if ($oi.SourceExists) { 'Green' } else { 'Yellow' }
+        Write-Host ("  [{0,2}]{1} {2}" -f ($i + 1), $mark, $a.Name) -ForegroundColor White
+        Write-Host ("       origin: {0}  [{1}]" -f $oi.SourceRaw, $ok) -ForegroundColor $okCol
+        if ($oi.SourceAbs -and $oi.SourceExists) {
+            Write-Host ("       path  : {0}" -f $oi.SourceAbs) -ForegroundColor DarkGray
+        }
+    }
+    Write-Host ''
+    Write-Host ("  พิมพ์หมายเลข 1-{0} แล้ว Enter (Enter = ยกเลิก)" -f $apps.Count) -ForegroundColor Yellow
+    $n = Read-MenuChoice '  > ' $apps.Count
+    if (-not $n) { Write-Info 'ยกเลิก'; return $null }
+    $app = $apps[$n - 1]
+    $oi = $infos[$n - 1]
+    return [pscustomobject]@{ App = $app; Origin = $oi }
+}
+
+function Select-DiffOutput([string]$appName) {
+    # เมนูเลือกโฟลเดอร์ output
+    $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+    $opts = @(
+        @{ Label = "dist\deploy-diff-$appName";           Detail = 'default (เขียนทับถ้ามี — ใช้ได้ถ้าลบก่อน/robocopy overwrite ผ่าน make-deploy-diff)' },
+        @{ Label = "dist\deploy-diff-$appName-$stamp";    Detail = 'timestamp — ไม่ชนกับของเดิม' },
+        @{ Label = "dist\deploy-diff-custom";             Detail = 'path สัมพัทธ์จาก root นี้' }
+    )
+    Write-Head 'เลือกโฟลเดอร์ output'
+    Write-Host ''
+    for ($i = 0; $i -lt $opts.Count; $i++) {
+        Write-Host ("  [{0}]  {1}" -f ($i + 1), $opts[$i].Label) -ForegroundColor White
+        Write-Host ("        {0}" -f $opts[$i].Detail) -ForegroundColor DarkGray
+    }
+    Write-Host ''
+    Write-Host '  Enter = ใช้ [1] หรือพิมพ์ path เอง (สัมพัทธ์/absolute)' -ForegroundColor Yellow
+    try {
+        if ([Console]::IsInputRedirected) { $ans = [Console]::In.ReadLine() }
+        else { $ans = Read-Host '  > ' }
+    } catch { $ans = '' }
+    if ($null -eq $ans -or [string]::IsNullOrWhiteSpace($ans)) { return $opts[0].Label }
+    $ans = "$ans".Trim().Trim('"')
+    if ($ans -match '^[123]$') { return $opts[[int]$ans - 1].Label }
+    return $ans
+}
+
+function Cmd-Diff($appVer, $outName, $extra) {
+    # aptstack diff              -> เมนูเลือก app + output แล้วรัน make-deploy-diff
+    # aptstack diff <app>        -> ใช้ app นั้น (ถาม output)
+    # aptstack diff <app> <out>  -> ระบุ output path ตรง ๆ
+    # aptstack diff help
+    if ("$appVer".ToLower() -in @('help', '-h', '--help', '/?')) {
+        Write-Head 'aptstack diff — เทียบต้นทาง vs โค้ดใน versions\ (เฉพาะไฟล์ที่ต่าง)'
+        Write-Host ''
+        Write-Host '  dist vs diff — ต่างกันอย่างไร' -ForegroundColor Yellow
+        Write-Host '  ----------------------------------------------------------' -ForegroundColor DarkGray
+        Write-Host '  dist  = copy ทั้งก้อน ไป dist_paste\          (ใหญ่, ไม่เทียบอะไร)' -ForegroundColor White
+        Write-Host '          ใช้: ติดตั้งใหม่ / ย้ายเครื่อง / server ยังไม่มีโค้ด' -ForegroundColor DarkGray
+        Write-Host '  diff  = เทียบต้นทาง vs versions\ → เฉพาะที่ต่าง' -ForegroundColor Cyan
+        Write-Host '          ใช้: patch server เดิม / ส่งเฉพาะไฟล์ที่แก้' -ForegroundColor DarkGray
+        Write-Host '  ----------------------------------------------------------' -ForegroundColor DarkGray
+        Write-Host ''
+        Write-Info 'ใช้: aptstack diff'
+        Write-Info '     aptstack diff <app> [outPath]'
+        Write-Info '     aptstack import-origin     ดูต้นทางทุก app'
+        Write-Info '     aptstack dist help         ดู copy ทั้งก้อน'
+        Write-Info 'เครื่องมือลึก: tools\make-deploy-diff.ps1 -Help'
+        return
+    }
+
+    $selected = $null
+    if ($appVer) {
+        $hit = Resolve-App $appVer
+        if (-not $hit) { throw "ไม่พบ app '$appVer' — ดูชื่อ: aptstack list" }
+        $selected = [pscustomobject]@{ App = $hit; Origin = (Get-AppOriginInfo $hit) }
+    } else {
+        $selected = Select-DiffApp
+        if (-not $selected) { return }
+    }
+
+    $app = $selected.App
+    $oi = $selected.Origin
+
+    Write-Head "ต้นทางของ app '$($app.Name)'"
+    Write-Host "  versions : $($app.Dir)" -ForegroundColor White
+    Write-Host "  kind     : $($oi.Kind)" -ForegroundColor Gray
+    Write-Host "  installed: $(if ($oi.Installed) { $oi.Installed } else { '?' })" -ForegroundColor Gray
+    Write-Host "  source   : $(if ($oi.SourceRaw) { $oi.SourceRaw } else { '(ไม่มี .aptstack-source)' })" -ForegroundColor $(if ($oi.SourceRaw) { 'Cyan' } else { 'Yellow' })
+    if ($oi.SourceAbs) {
+        $st = if ($oi.SourceExists) { "พบ ($($oi.SourceType))" } else { 'ไม่พบ' }
+        Write-Host "  resolved : $($oi.SourceAbs)" -ForegroundColor $(if ($oi.SourceExists) { 'Green' } else { 'Yellow' })
+        Write-Host "  status   : $st" -ForegroundColor $(if ($oi.SourceExists) { 'Green' } else { 'Yellow' })
+    } elseif ($oi.SourceRaw) {
+        Write-Host '  resolved : (แปลง path ไม่ได้)' -ForegroundColor Yellow
+    }
+    Write-Host ''
+
+    if (-not $oi.SourceExists) {
+        Write-Warn2 'ไม่พบไฟล์/โฟลเดอร์ต้นทาง — diff ใช้ Base ไม่ได้'
+        Write-Info 'ตรวจสอบ .aptstack-source ของ app นี้ หรือส่ง path เอง:'
+        Write-Info '  powershell -File tools\make-deploy-diff.ps1 -Base <zip|dir> -Compare "versions\' + $app.Name + '"'
+        # ยังให้ลองพิมพ์ path เองได้
+        Write-Host ''
+        Write-Host '  พิมพ์ path ต้นทาง (Base) เอง หรือ Enter = ยกเลิก' -ForegroundColor Yellow
+        try {
+            if ([Console]::IsInputRedirected) { $manual = [Console]::In.ReadLine() }
+            else { $manual = Read-Host '  Base > ' }
+        } catch { $manual = '' }
+        if ([string]::IsNullOrWhiteSpace("$manual")) { Write-Info 'ยกเลิก'; return }
+        $manual = "$manual".Trim().Trim('"')
+        $manualAbs = Resolve-OriginPath $manual
+        if (-not (Test-Path -LiteralPath $manualAbs)) { throw "ไม่พบ path: $manualAbs" }
+        $oi = [pscustomobject]@{
+            App = $app.Name; Dir = $app.Dir; Family = $app.Family
+            Kind = $oi.Kind; SourceRaw = $manual; SourceAbs = $manualAbs
+            SourceExists = $true; SourceType = 'manual'; Installed = $oi.Installed
+        }
+    }
+
+    $base = $oi.SourceAbs
+    $compare = $app.Dir
+    if (-not $outName) { $outName = Select-DiffOutput $app.Name }
+    if (-not $outName) { $outName = "dist\deploy-diff-$($app.Name)" }
+    $outFull = $outName
+    if ($outFull -notmatch '^[A-Za-z]:[\\/]') { $outFull = Join-Path $Root $outFull }
+
+    $tool = Join-Path $Root 'tools\make-deploy-diff.ps1'
+    if (-not (Test-Path $tool)) { throw "ไม่พบ $tool" }
+
+    Write-Head 'รัน make-deploy-diff'
+    Write-Info "Base    : $base"
+    Write-Info "Compare : $compare"
+    Write-Info "Out     : $outFull"
+    Write-Host ''
+
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $tool `
+        -Base $base -Compare $compare -Out $outFull
+    $code = $LASTEXITCODE
+    if ($code -ne 0) { throw "make-deploy-diff จบด้วย exit code $code" }
+
+    Write-Host ''
+    Write-Ok "เสร็จแล้ว: $outFull"
+    Write-Info "ดูรายงาน: $(Join-Path $outFull 'report.txt')"
+    Write-Info " apply  : powershell -ExecutionPolicy Bypass -File `"$outFull\apply.ps1`" -Target <root-on-server>"
+    Write-Info " ต้นทางทุก app: aptstack import-origin"
+}
+
+function Cmd-ImportOrigin {
+    # แสดงต้นทางว่าแต่ละ app / binary ถูก import มาจากไหน (ทุกตัว)
+    Write-Head 'import-origin — ต้นทางของทุก app / component'
+
+    $apps = @(Get-AppVersions)
+    $active = Get-CurrentAppName
+
+    Write-Host ''
+    Write-Host '  App versions (versions\)' -ForegroundColor White
+    if ($apps.Count -eq 0) { Write-Info '  (ยังไม่มี)' }
+    $rows = @()
+    foreach ($a in $apps) {
+        $oi = Get-AppOriginInfo $a
+        $rows += $oi
+        $mark = if ($active -eq $a.Name) { '*' } else { ' ' }
+        $ok = if ($oi.SourceExists) { 'OK' } else { 'MISS' }
+        $okCol = if ($oi.SourceExists) { 'Green' } else { 'Yellow' }
+        Write-Host ("  {0} {1}" -f $mark, $oi.App) -ForegroundColor White
+        Write-Host ("      kind      : {0}" -f $oi.Kind) -ForegroundColor DarkGray
+        Write-Host ("      installed : {0}" -f $(if ($oi.Installed) { $oi.Installed } else { '?' })) -ForegroundColor DarkGray
+        Write-Host ("      source    : {0}  [{1}]" -f $(if ($oi.SourceRaw) { $oi.SourceRaw } else { '(none)' }), $ok) -ForegroundColor $okCol
+        if ($oi.SourceAbs) {
+            Write-Host ("      absolute  : {0}" -f $oi.SourceAbs) -ForegroundColor DarkGray
+        }
+        Write-Host ''
+    }
+
+    # สรุปจับกลุ่มตาม source
+    Write-Host '  สรุปตามต้นทาง (group)' -ForegroundColor White
+    $bySrc = $rows | Group-Object {
+        if ($_.SourceAbs) { $_.SourceAbs }
+        elseif ($_.SourceRaw) { $_.SourceRaw }
+        else { '(no source)' }
+    } | Sort-Object Name
+    foreach ($g in $bySrc) {
+        $names = ($g.Group | ForEach-Object { $_.App }) -join ', '
+        $exists = $g.Group[0].SourceExists
+        $tag = if ($exists) { 'OK' } else { 'MISS' }
+        Write-Host ("  [{0}] {1}" -f $tag, $g.Name) -ForegroundColor $(if ($exists) { 'Green' } else { 'Yellow' })
+        Write-Host ("         apps: {0}" -f $names) -ForegroundColor DarkGray
+    }
+
+    Write-Host ''
+    Write-Host '  Binary (stack\) — from: จาก aptstack list' -ForegroundColor White
+    foreach ($p in @(Get-PhpVersions)) {
+        $sm = Get-SourceMeta $p.Dir
+        if ($sm -and $sm['source']) {
+            $abs = Resolve-OriginPath $sm['source']
+            $ok = if ($abs -and (Test-Path -LiteralPath $abs)) { 'OK' } else { 'MISS' }
+            Write-Host ("  PHP  {0}  from: {1}  [{2}]" -f $p.Version, $sm['source'], $ok) -ForegroundColor $(if ($ok -eq 'OK') { 'Gray' } else { 'Yellow' })
+            if ($abs) { Write-Host ("       -> {0}" -f $abs) -ForegroundColor DarkGray }
+        }
+    }
+    foreach ($m in @(Get-MySqlVersions)) {
+        $sm = Get-SourceMeta $m.Dir
+        if ($sm -and $sm['source']) {
+            $abs = Resolve-OriginPath $sm['source']
+            $ok = if ($abs -and (Test-Path -LiteralPath $abs)) { 'OK' } else { 'MISS' }
+            Write-Host ("  MySQL {0}  from: {1}  [{2}]" -f $m.Version, $sm['source'], $ok) -ForegroundColor $(if ($ok -eq 'OK') { 'Gray' } else { 'Yellow' })
+        }
+    }
+    foreach ($a in @(Get-ApacheVersions)) {
+        $sm = Get-SourceMeta $a.Dir
+        if ($sm -and $sm['source']) {
+            $abs = Resolve-OriginPath $sm['source']
+            $ok = if ($abs -and (Test-Path -LiteralPath $abs)) { 'OK' } else { 'MISS' }
+            Write-Host ("  Apache {0}  from: {1}  [{2}]" -f $a.Version, $sm['source'], $ok) -ForegroundColor $(if ($ok -eq 'OK') { 'Gray' } else { 'Yellow' })
+        }
+    }
+
+    Write-Host ''
+    Write-Info 'ดู HTML lineage: tools\show-app-lineage.ps1'
+    Write-Info 'เทียบ diff    : aptstack diff'
+}
+
 function Cmd-Dist($appVer, $outRoot, $extra) {
     # สร้างชุด deploy แบบ copy-paste ได้ทันที: dist_paste\<appver>\
     # รวม scripts + app code + (ถ้าไม่บอก nostack) binary ทั้งหมด + www + config บางส่วน
     # ไม่รวม: data (DB), config ที่ generate, certs, logs, .git  -> server สร้างเองตอน start
+    # ต่างจาก aptstack diff = เทียบต้นทางแล้วเอาเฉพาะไฟล์ที่ต่าง
+    if ("$appVer".ToLower() -in @('help', '-h', '--help', '/?')) {
+        Write-Head 'aptstack dist — copy ทั้งก้อน ไป dist_paste\ (ไม่เทียบ diff)'
+        Write-Host ''
+        Write-Host '  dist vs diff — ต่างกันอย่างไร' -ForegroundColor Yellow
+        Write-Host '  ----------------------------------------------------------' -ForegroundColor DarkGray
+        Write-Host '  dist  = copy ทั้งก้อน → dist_paste\<app>\' -ForegroundColor White
+        Write-Host '          scripts + app + (stack) + VERSIONS.txt' -ForegroundColor DarkGray
+        Write-Host '          ใช้: ติดตั้งใหม่ / ย้ายเครื่อง / ยังไม่มีโค้ดบน server' -ForegroundColor DarkGray
+        Write-Host '  diff  = เทียบต้นทาง vs versions\ → เฉพาะไฟล์ที่ต่าง' -ForegroundColor Cyan
+        Write-Host '          ใช้: patch server เดิม / ส่งเฉพาะที่แก้' -ForegroundColor DarkGray
+        Write-Host '  ----------------------------------------------------------' -ForegroundColor DarkGray
+        Write-Host ''
+        Write-Info 'ใช้: aptstack dist <app> [outRoot] [nostack]'
+        Write-Info '     aptstack diff              ดูแบบเทียบเฉพาะไฟล์ต่าง'
+        Write-Info '     aptstack import-origin     ดูต้นทางทุก app'
+        return
+    }
     Ensure-Dirs
     if (-not $appVer) { $appVer = Get-CurrentAppName }
-    if (-not $appVer) { throw 'ไม่ได้ระบุ app และยังไม่มีตัว active — ใช้: aptstack dist <ชื่อapp> [outRoot] [nostack]' }
+    if (-not $appVer) { throw 'ไม่ได้ระบุ app และยังไม่มีตัว active — ใช้: aptstack dist <ชื่อapp> [outRoot] [nostack]  (หรือ aptstack dist help)' }
     $hit = Resolve-App $appVer
     if (-not $hit) { throw "ไม่พบ versions\$appVer (ดูชื่อ: aptstack list)" }
     if (-not $outRoot) { $outRoot = Join-Path $Root 'dist_paste' }
@@ -4461,11 +5714,12 @@ function Cmd-Help {
   ── ติดตั้งครั้งแรก ───────────────────────────────────
   aptstack init                    เตรียมโครงสร้างโฟลเดอร์ (ไม่มีแอปเลย -> ลงตัวอย่างให้)
   aptstack samples                 ติดตั้งตัวอย่างทั้งหมด (hello / todo / sysinfo)
-  aptstack add app <folder|zip>    เพิ่มเวอร์ชันแอป -> versions\<name>
+  aptstack add app [folder|zip]    เพิ่มเวอร์ชันแอป -> versions\<name>
+                                    ไม่ใส่ path = เมนูเลือก zip/โฟลเดอร์ด้วยหมายเลข
   aptstack seed                    สร้าง database ตัวอย่าง (greetings + todo_items)
   aptstack add php 8.3.36          เติม URL ทางการให้เอง + โหลด + ติดตั้ง (ใช้ latest ก็ได้)
   aptstack add php <zip|url>       หรือส่ง URL/path เอง
-  aptstack list                    ดูที่ติดตั้ง + ที่ใช้อยู่ (มี from: <url> ให้ copy โหลดเองได้)
+  aptstack list                    ดูที่ติดตั้ง + ที่ใช้อยู่ + ชื่อ DB + user ทั้งหมด
   aptstack list --available        ดูเวอร์ชันที่ "โหลดได้" จากเว็บทางการ (php|mysql|apache)
   aptstack start                   เริ่ม MariaDB + Web
   aptstack doctor                  ตรวจสุขภาพ + ช่องโหว่ RCE
@@ -4479,12 +5733,15 @@ function Cmd-Help {
   aptstack use php 8.3.36          สลับ PHP + restart
   aptstack use apache 2.4.69       สลับ Apache + restart (mod_php)
   aptstack use mysql 11.4.13       สลับ MySQL/MariaDB (datadir แยกต่อ version)
-  aptstack add app <folder|zip>    copy version ใหม่ลง แล้ว use เลย
+  aptstack add app [folder|zip]    copy version ใหม่ลง แล้ว use เลย
+                                    (ไม่ใส่ path = เมนูเลือกหมายเลข)
   aptstack add apache <ver|zip|url> เพิ่ม Apache (เช่น 2.4.69 — โหลดจาก Apache Lounge ให้เอง) -> stack\apache\
   aptstack add mysql <version|zip> เพิ่ม MySQL/MariaDB -> stack\mysql\
   aptstack add phpmyadmin [ver|latest]  ติดตั้ง/เปลี่ยน -> www\phpmyadmin (URL: /phpmyadmin/)
   aptstack list --available phpmyadmin  ดูเวอร์ชันที่โหลดได้
   aptstack db                     ดู user/URL ของ stack นี้
+  aptstack db-list [all]          ชื่อ database + user ทั้งหมด (สั้น)
+  aptstack db list [all]          รายชื่อ database + จำนวนตาราง + ขนาด + users (all = รวม system)
   aptstack db set-root <pass>     ตั้งรหัส root (อัปเดต stack.json + phpMyAdmin ให้)
   aptstack db add-user <user> <pass>   เพิ่ม MySQL user ใหม่
 
@@ -4509,6 +5766,10 @@ function Cmd-Help {
   aptstack seed                    import database ตัวอย่าง (aptstack_demo)
   aptstack import <file.sql|.sql.zip> [dbname]
                                    import dump เข้า database (สร้าง DB ให้ · ไทยไม่พัง · แบบ db_manager)
+  aptstack import <โฟลเดอร์ dump> [dbname]
+                                   ลิสต์ .sql/.sql.zip/.zip ให้เลือกหมายเลข (1,2 / all / 1,3)
+                                   ระบุ [dbname] = ใช้ชื่อนั้น · ไม่ระบุ = ถาม + โชว์รายการ DB (กันซ้ำ)
+                                   เช่น aptstack import ..\_setup_appoint\ appoint052569
   aptstack import <โฟลเดอร์ aptstack เก่า> [--no-downloads]
                                    ย้ายทั้ง install เก่า (stack/data/www/versions/config) เข้า root นี้
                                    — โค้ดใหม่คงเดิม · แสดงสถานะทีละขั้น · data เก่ากันไว้ data.preimport-*
@@ -4527,24 +5788,81 @@ function Cmd-Help {
   aptstack remove app <ชื่อ>       ลบโค้ด app (ถามยืนยัน · ตัวที่ใช้อยู่ลบไม่ได้)
   aptstack remove php|apache|mysql <ชื่อ> [data]  ลบ binary (data เก็บไว้ เว้นแต่ใส่ data แล้วยืนยัน DELETE)
   aptstack migrate mysql <ใหม่>    โยกข้อมูล DB ไป engine ใหม่ (dump -> switch -> restore)
+  aptstack pull mysql <สูง> [root]  ดึง config + ฐานข้อมูล จาก version ต่ำ/root อื่น -> version สูง
+                                   list แหล่งรวม -> เลือกกลุ่ม -> เลือกรายตัวหรือ all -> ดูแผนก่อน
+                                   -> มี % + ETA ระหว่าง dump/import
   aptstack report [path]           สร้างหน้า HTML สรุปสถานะทั้งหมด (เปิดให้ + พิมพ์ได้)
   aptstack report db [name]        inventory database (ก้อน/ตาราง/ขนาด/ดิสก์รวม)
   aptstack record start [name]     บันทึกคำสั่งเป็น scripts\*.ps1 (รันซ้ำได้)
   aptstack record stop | status
   aptstack play <file.ps1>         รัน script ที่ record ไว้
   aptstack size                    ดูพื้นที่ทุกโฟลเดอร์ + เตือน bundle บวม / ดิสก์ใกล้เต็ม
-  aptstack dist <app> [out] [nostack]  สร้างชุด deploy copy-paste (มี VERSIONS.txt + DEPLOY.txt)
+
+  ── deploy / เทียบโค้ด ───────────────────────────────
+  aptstack dist <app> [out] [nostack]
+        copy ทั้งก้อน → dist_paste\<app>\
+        (scripts + app + stack ถ้าไม่ nostack + VERSIONS.txt)
+        = "เอาชุดสมบูรณ์ไปวาง server ใหม่"
+        → ใหญ่ · ไม่เทียบกับต้นทาง · ใช้ตอนติดตั้งครั้งแรก/ย้ายเครื่อง
+
+  aptstack diff [app] [out]
+        เทียบ ต้นทาง(.aptstack-source) vs versions\<app>
+        → เฉพาะไฟล์ที่ต่าง (files\ + manifest + report + apply.ps1)
+        = "เอาเฉพาะ patch ที่แก้ไป overwrite server เดิม"
+        → เล็ก · ต้องมี zip/folder ต้นทาง · เมนูเลือก app/output
+        ดูต้นทางทุก app:  aptstack import-origin
+
+  aptstack import-origin           แสดงต้นทางว่า import app/binary มาจากไหน (ทุกตัว)
   aptstack git init|status|clear   git ของ bundle บน server (track config เฉย ๆ / ลบ .git)
 
   ── Windows Service ──────────────────────────────────
+  aptstack service                 ดูวิธีใช้ + สถานะ service
   aptstack service install         ติดตั้ง service (ต้อง Run as admin)
   aptstack service uninstall
-  aptstack service start | stop | status
+  aptstack service start | stop | status | restart
+  aptstack service compile         build bin\aptstack-svc.exe อย่างเดียว
 
   ── ทางลัด ──────────────────────────────────────────
   as list                          ใช้ as แทน aptstack ได้
   aptstack l                       l = list
 '@ | Write-Host
+}
+
+# ---------------------------------------------------------------- service
+function Cmd-ServiceHelp {
+    Write-Head 'Windows Service (AptStack)'
+    Write-Info 'bin : bin\aptstack-svc.exe   (compile จาก service\AptStackService.cs)'
+    Write-Info 'run : aptstack.ps1 service-run  (service เรียกตัวนี้เอง)'
+    Write-Host ''
+    Write-Host '   คำสั่ง (ต้อง Run as admin สำหรับ install/uninstall/start/stop):' -ForegroundColor Gray
+    Write-Host '   aptstack service                 หน้านี้ + สถานะปัจจุบัน' -ForegroundColor White
+    Write-Host '   aptstack service status          ดูสถานะ + binPath' -ForegroundColor White
+    Write-Host '   aptstack service install         ติดตั้ง (sc create Auto + failure restart)' -ForegroundColor White
+    Write-Host '   aptstack service uninstall       ถอน (sc stop + sc delete)' -ForegroundColor White
+    Write-Host '   aptstack service start           เริ่ม stack ผ่าน service' -ForegroundColor White
+    Write-Host '   aptstack service stop            หยุด (เขียน stop.flag → Cmd-Stop)' -ForegroundColor White
+    Write-Host '   aptstack service restart         stop + start' -ForegroundColor White
+    Write-Host '   aptstack service compile         build aptstack-svc.exe อย่างเดียว' -ForegroundColor White
+    Write-Host ''
+    Write-Info 'หมายเหตุ: ชื่อ service = AptStack · binPath ชี้ bundle root ที่สั่ง install'
+    Write-Info 'ย้ายไป bundle อื่น → uninstall จาก root เก่า แล้ว install จาก root ใหม่'
+    Write-Host ''
+    & (Join-Path $Root 'service.ps1') -Action status
+}
+
+function Cmd-Service([string]$act) {
+    $sa = "$act".Trim().ToLowerInvariant()
+    if (-not $sa -or $sa -in @('help', 'h', '?', '--help', '-?', '/?')) {
+        Cmd-ServiceHelp
+        return
+    }
+    $valid = @('install', 'uninstall', 'start', 'stop', 'restart', 'status', 'compile')
+    if ($sa -notin $valid) {
+        Write-Warn2 "ไม่รู้จัก action: $act"
+        Cmd-ServiceHelp
+        throw ("ใช้: aptstack service [install|uninstall|start|stop|restart|status|compile]`n     (ไม่ใส่ action = help)")
+    }
+    & (Join-Path $Root 'service.ps1') -Action $sa
 }
 
 # ---------------------------------------------------------------- service run
@@ -4614,6 +5932,22 @@ switch ($Command.ToLower()) {
     'seed'        { Cmd-Seed }
     'import'      { Cmd-Import $Action $Value $Extra }
     'db'          { Cmd-Db $Action $Value $Extra }
+    'db-list'     {
+        # aptstack db-list [all] — ชื่อ DB + user ทั้งหมด (ไม่โชว์ขนาด)
+        if ("$Action" -eq 'help' -or "$Action" -eq '-h') {
+            Write-Head 'aptstack db-list — ชื่อ database + user ทั้งหมด'
+            Write-Info 'ใช้: aptstack db-list'
+            Write-Info '     aptstack db-list all     รวม system db'
+            Write-Info 'ดูขนาด/ตาราง: aptstack db list'
+            return
+        }
+        Write-Head 'db-list — database names + users'
+        Show-DbNamesAndUsers (Get-Config) $true
+        Write-Host ''
+        Write-Info 'รายละเอียด+ขนาด: aptstack db list [all]'
+        Write-Info 'เพิ่ม user     : aptstack db add-user <user> <pass>'
+    }
+    'dblist'      { Cmd-Db 'list' $Action $Value }
     'config'      { Cmd-Config $Action $Value }
     'samples'     { Cmd-Samples }
     'report'      { Cmd-Report $Action $Value }
@@ -4621,15 +5955,19 @@ switch ($Command.ToLower()) {
     'play'        { Cmd-Play $Action }
     'size'        { Cmd-Size }
     'dist'        { Cmd-Dist $Action $Value $Extra }
+    'diff'        { Cmd-Diff $Action $Value $Extra }
+    'import-origin' { Cmd-ImportOrigin }
+    'origin'      { Cmd-ImportOrigin }
     'git'         { Cmd-Git $Action $Value }
     'clone'       { Cmd-Clone $Action $Value $Extra }
     'remove'      { Cmd-Remove $Action $Value $Extra }
     'rm'          { Cmd-Remove $Action $Value $Extra }
     'migrate'     { Cmd-Migrate $Action $Value }
+    'pull'        { Cmd-Pull $Action $Value $Extra }
     'logs'        { Cmd-Logs $Action $Value }
     'tls'         { Cmd-Tls $Action $Value $Extra }
     'https'       { Cmd-Tls $Action $Value $Extra }
-    'service'     { & (Join-Path $Root 'service.ps1') -Action $Action }
+    'service'     { Cmd-Service $Action }
     'service-run' { Cmd-ServiceRun }
     default       { Cmd-Help }
 }

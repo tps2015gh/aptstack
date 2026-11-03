@@ -72,11 +72,25 @@ Set-SourceMeta / Get-SourceMeta                                 # บันท�
 Write-Utf8NoBom                                                 # เขียนไฟล์ UTF8 ไม่มี BOM
 ```
 
-## 6. dispatch ปัจจุบัน
+## 6. dispatch ปัจจุบัน (v1.3.6)
 
-`init · add · list/ls/l · use/u · next · prev · php · mysql · apache · start · run · stop ·
+`init · add · list/ls/l · use/u · next · prev · start · run · stop ·
 restart · status · doctor · backup · seed · samples · report · size · logs · tls/https ·
-clone · remove/rm · migrate · dist · git · service · service-run · help/h/-h/--help`
+clone · remove/rm · migrate · pull · dist · diff · import-origin/origin ·
+db · db-list · git · service · service-run · help/h/-h/--help`
+
+**คำสั่ง deploy / origin (1.3.6)**
+
+| คำสั่ง | ทำอะไร |
+|---|---|
+| `aptstack dist <app> [out] [nostack]` | copy **ทั้งก้อน** → `dist_paste\` (ติดตั้งใหม่/ย้ายเครื่อง) |
+| `aptstack diff [app] [out]` | เทียบ **ต้นทาง vs versions\\** → เฉพาะไฟล์ที่ต่าง (patch server เดิม) |
+| `aptstack import-origin` | แสดง origin ของทุก app/binary (OK/MISS) |
+| `aptstack db-list` | ชื่อ DB + user ทั้งหมด (สั้น) |
+| `aptstack list` | รวมชื่อ DB + users ด้วย |
+
+กติกา **dist vs diff**: help ทั้งคู่ต้องอธิบายต่างกันชัด (copy-all vs changed-only) ·
+diff เรียก `tools\make-deploy-diff.ps1` · ต้นทางอ่านจาก `.aptstack-source`
 
 ## 7. ข้อควรระวังด้านความปลอดภัย
 
@@ -158,3 +172,23 @@ Invoke-WebRequest http://127.0.0.1:8077/app/ -UseBasicParsing
 - token GitHub: **revoke แล้ว** (ทุกครั้งที่ push ต้องขอใหม่) · backup history: aptstack-BEFORE-history-rewrite.bundle (อยู่นอก repo, มีชื่อระบบเก่า — ห้าม share)
 - screenshot console: docs/screenshots/console.png
 - ไทม์ไลน์/ประวัติ: apphistory.md (คู่กับ CHANGELOG)
+
+---
+
+## งานต่อเนื่อง: Lands Authen (CI3) — กลับมาแก้ต้องรู้
+
+> Map: **[architech.md](architech.md)** · สิทธิ์/flow ในหน้า `adm2/workflow_report`, `adm2/rights_guidance`
+
+1. active app ดู `config/stack.json` → `app`
+2. `admin_write_status` / `can_*` **ยังไม่ gate operation** — display only
+3. **`form_history.form_status` ค้าง `'NEW'`** — ไม่มี UPDATE เมื่อจบงาน
+   (list ใช้ badge คำนวณจาก `user_apps.is_finished` · แก้จริงดู `rights_guidance` §4)
+4. list_forms: pagination window (≤150 links) · ค้น `form_hash` ที่ menutop
+5. Apache ใช้ mod_php **8.2.35** · ห้าม 7.4/EOL production · หน้า `adm2/php2shell`
+6. CI3+PHP8.2: index.php ตัด E_DEPRECATED · `#[AllowDynamicProperties]` ใน core
+7. lostpass แยก silo — แผนรวมที่ `system_info`
+8. **ห้าม commit** `data\` / dump ประชาชน / logs บ่งชี้ตัวตน
+
+หน้าเอกสาร: workflow_report · rights_guidance · adm_right_detail · system_info · php2shell
+— อัปเดตเมื่อ behavior สิทธิ์/flow เปลี่ยน
+
