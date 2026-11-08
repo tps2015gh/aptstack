@@ -55,6 +55,8 @@ aptstack db-list        :: ชื่อ DB + user ทั้งหมด (สั�
 ```cmd
 aptstack update         :: ดึง release ใหม่จาก GitHub → patch เฉพาะโค้ด
                          :: ไม่แตะ stack\ versions\ config\ data\ (ดูหัวข้อ "อัปเดตจากเวอร์ชันเก่า")
+aptstack version | -v   :: เวอร์ชันแพ็กเกจ (สั้น ใช้ใน script ได้)
+aptstack info           :: root + app ที่ใช้ + php/apache/mysql ที่ติดตั้ง + พอร์ต
 ```
 
 > **dist vs diff** — `dist` = เอาชุดสมบูรณ์ไปวาง server ใหม่ ·

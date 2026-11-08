@@ -30,7 +30,9 @@ param(
     # ไม่งั้น PS โยน parameter binding error ก่อนถึง dispatch เหมือนกรณี -h เดิม)
     [switch]$Available,
     # aptstack -h / -? -> โชว์ help (PS ไม่รับ --help แต่เราจะดักใน dispatch ให้เอง)
-    [Alias('h', '?', 'Help')][switch]$HelpFlag
+    [Alias('h', '?', 'Help')][switch]$HelpFlag,
+    # aptstack -v / -Version -> โชว์เวอร์ชัน (alias v จับก่อน prefix ของ -Value)
+    [Alias('v', 'Version')][switch]$VersionFlag
 )
 
 $ErrorActionPreference = 'Stop'
@@ -6186,6 +6188,65 @@ function Cmd-Update([string]$act, [string]$mode) {
     }
 }
 
+function Cmd-Version {
+    # สั้น: aptstack -v | --version | version (ใช้ใน script/CI — บรรทัดเดียวพอ)
+    $v = Get-LocalAppVersion
+    Write-Host "aptstack $v"
+    Write-Info "root : $Root"
+    Write-Info "update: aptstack update check   (เทียบกับ GitHub release ล่าสุด)"
+}
+
+function Cmd-Info {
+    # ยาว: aptstack info — เวอร์ชัน + root + config สำคัญ + ของที่ติดตั้งอยู่
+    $v = Get-LocalAppVersion
+    $cfg = Get-Config
+    Write-Head "aptstack $v"
+    Write-Info "root       : $Root"
+    Write-Info "repo       : https://github.com/$Script:UpdateRepo"
+    Write-Info "release    : https://github.com/$Script:UpdateRepo/releases/tag/v$v"
+
+    # git (ถ้ามี)
+    if (Test-Path (Join-Path $Root '.git')) {
+        $oldEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        $gitExe = [bool](Get-Command git -ErrorAction SilentlyContinue)
+        if ($gitExe) {
+            $head = "$(& git -C $Root rev-parse --short HEAD 2>$null | Select-Object -First 1)"
+            $branch = "$(& git -C $Root rev-parse --abbrev-ref HEAD 2>$null | Select-Object -First 1)"
+            $dirty = @(& git -C $Root status --porcelain 2>$null).Count
+            if ($head) { Write-Info "git        : $branch @ $head$(if ($dirty -gt 0) { "  ($dirty uncommitted)" })" }
+        }
+        $ErrorActionPreference = $oldEap
+    } else { Write-Info 'git        : ไม่ใช่ clone (release zip / portable folder)' }
+
+    Write-Host ''
+    $apps = @(Get-AppVersions)
+    $phpVers = @(Get-PhpVersions)
+    $mySql = @(Get-ChildItem $Script:P.MySqlRoot -Directory -EA SilentlyContinue)
+    $apache = @(Get-ChildItem $Script:P.ApacheRoot -Directory -EA SilentlyContinue)
+    $curApp = Get-CurrentAppName
+    $link = Join-Path $Script:P.Www "$($cfg.appAlias)"
+    $li = Get-Item -LiteralPath $link -Force -EA SilentlyContinue
+    $linkTxt = if (-not $li) { '(ไม่พบ)' }
+               elseif ($li.Attributes -band [IO.FileAttributes]::ReparsePoint) { "junction -> $(Split-Path "$($li.Target)" -Leaf)" }
+               else { 'โฟลเดอร์ธรรมดา (ไม่ใช่ junction — aptstack doctor ซ่อมให้ได้)' }
+    $appNames = if ($apps.Count -gt 0) {
+        $n = ($apps | Select-Object -First 8 | ForEach-Object Name) -join ', '
+        "  [$n$(if ($apps.Count -gt 8) { ', …' })]"
+    } else { '' }
+    Write-Info "app active : $(if ($curApp) { $curApp } else { '(ยังไม่ได้ use)' })   www\$($cfg.appAlias) = $linkTxt"
+    Write-Info "apps       : $($apps.Count) ใน versions\$appNames"
+    Write-Info "php        : config=$($cfg.php)   ติดตั้ง $($phpVers.Count) ตัว$(if ($phpVers.Count -gt 0) { '  [' + (($phpVers | ForEach-Object Version) -join ', ') + ']' })"
+    Write-Info "apache     : config=$($cfg.apache)   ติดตั้ง $($apache.Count) ตัว$(if ($apache.Count -gt 0) { '  [' + (($apache | ForEach-Object Name) -join ', ') + ']' })"
+    Write-Info "mysql      : config=$($cfg.mysql)   ติดตั้ง $($mySql.Count) ตัว$(if ($mySql.Count -gt 0) { '  [' + (($mySql | ForEach-Object Name) -join ', ') + ']' })"
+    Write-Info "ports      : http $($cfg.httpPort) · db $($cfg.dbPort) · https $(if ("$($cfg.httpsEnabled)".ToLower() -eq 'true') { "$($cfg.httpsPort) (on)" } else { 'off' })"
+    Write-Info "mode       : webMode=$($cfg.webMode) · dbMode=$($cfg.dbMode)"
+
+    Write-Host ''
+    Write-Info 'ตรวจสุขภาพ     : aptstack doctor'
+    Write-Info 'ดูเวอร์ชันใหม่  : aptstack update check   (หรือ aptstack update เพื่ออัปเดตโค้ด)'
+    Write-Info 'สถานะ/พอร์ต    : aptstack status · aptstack list'
+}
+
 function Cmd-Help {
     Write-Head 'aptstack — portable PHP / MariaDB / app-version manager'
     @'
@@ -6201,6 +6262,8 @@ function Cmd-Help {
   aptstack list --available        ดูเวอร์ชันที่ "โหลดได้" จากเว็บทางการ (php|mysql|apache)
   aptstack start                   เริ่ม MariaDB + Web
   aptstack doctor                  ตรวจสุขภาพ + ช่องโหว่ RCE
+  aptstack version | -v            เวอร์ชันแพ็กเกจ (สั้น — ใช้ใน script ได้)
+  aptstack info                    สรุป root/config/สิ่งที่ติดตั้ง + URL release
   aptstack update [check|zip|git|force]
                                    อัปเดตโค้ดจาก GitHub (release zip + sha256 หรือ git pull)
                                    check = ดูเวอร์ชันอย่างเดียว · ไม่แตะ config/data/versions/stack
@@ -6371,6 +6434,8 @@ function Cmd-ServiceRun {
 Ensure-Dirs
 # -h / -? / --help ทุกรูปแบบ -> พาไป help
 if ($HelpFlag) { $Command = 'help' }
+# -v / -Version -> โชว์เวอร์ชัน (ค่าเริ่มต้น Command = help ถ้าไม่ใส่อะไร)
+if ($VersionFlag) { $Command = 'version' }
 
 switch ($Command.ToLower()) {
     'init'        { Cmd-Init }
@@ -6379,6 +6444,11 @@ switch ($Command.ToLower()) {
     '?'           { Cmd-Help }
     '/?'          { Cmd-Help }
     '--help'      { Cmd-Help }
+    'version'     { Cmd-Version }
+    'ver'         { Cmd-Version }
+    '--version'   { Cmd-Version }
+    'info'        { Cmd-Info }
+    '--info'      { Cmd-Info }
     'add'         { Cmd-Add $Action $Value $Extra }
     'list'        {
         # -Available (switch) กิน token `--available` ไป -> kind หลุดมาอยู่ $Action

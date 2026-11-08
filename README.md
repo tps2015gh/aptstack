@@ -210,6 +210,8 @@ are ignored on purpose (this repo is public).
 | `aptstack start` / `stop` / `restart` | stack lifecycle |
 | `aptstack status` | running? which version? |
 | `aptstack doctor` | security + health check |
+| `aptstack version` / `-v` | print package version (one line + root — script/CI friendly) |
+| `aptstack info` | version + root/repo + active app + installed PHP/Apache/MySQL + ports/mode |
 | `aptstack update [check\|zip\|git\|force]` | self-update code from GitHub (release zip + SHA256 or git pull) — **never touches `stack\` / `versions\` / `config\` / `data\`** |
 | `aptstack backup [file]` | dump all databases → `data\dumps\` |
 | `aptstack seed` | import sample database (`aptstack_demo`) |
