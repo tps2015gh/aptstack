@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.8 — 2026-11-08
+
+### Added
+
+- **`aptstack version`** (alias: `ver` · flag: **`-v` / `-Version`**) — เวอร์ชันแพ็กเกจสั้น
+  (version + root + _hint `update check` — ใช้ใน script/CI ได้)
+- **`aptstack info`** — สรุป bundle: root/repo/release URL · git head (ถ้ามี) ·
+  app ที่ใช้ + สถานะ junction `www\app` · รายชื่อ php/apache/mysql ที่ติดตั้ง ·
+  พอร์ต + webMode/dbMode · คำสั่งถัดไป (doctor/update/status)
+- `-v` เดิมชน parameter `-Value` ของ PowerShell → alias บน `VersionFlag` รับก่อน
+
 ## 1.3.7 — 2026-11-04
 
 ### Added
