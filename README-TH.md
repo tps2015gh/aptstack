@@ -50,6 +50,13 @@ aptstack import-origin  :: ดูว่าแต่ละ app import มาจ�
 aptstack db-list        :: ชื่อ DB + user ทั้งหมด (สั้น)
 ```
 
+**อัปเดตโค้ดตัวเอง (1.3.7+)**
+
+```cmd
+aptstack update         :: ดึง release ใหม่จาก GitHub → patch เฉพาะโค้ด
+                         :: ไม่แตะ stack\ versions\ config\ data\ (ดูหัวข้อ "อัปเดตจากเวอร์ชันเก่า")
+```
+
 > **dist vs diff** — `dist` = เอาชุดสมบูรณ์ไปวาง server ใหม่ ·
 > `diff` = เอาเฉพาะ patch ไป overwrite server เดิม (ดู `aptstack help`)
 
@@ -123,6 +130,74 @@ aptstack doctor
 - `add` ยังรับ **URL mirror ภายใน** ได้: `aptstack add php http://pkg.internal/apt/php.zip`
 - อย่าลืม `vc_redist_x64.exe` ถ้าเครื่อง server ยังไม่มี VC++ runtime
 - ขั้นตอนเต็ม + checksum + checklist → **[docs/OFFLINE-DEPLOY.md](docs/OFFLINE-DEPLOY.md)**
+
+---
+
+## อัปเดตจากเวอร์ชันเก่า (ไม่ต้องโหลดใหม่ทั้งหมด)
+
+ใช้ aptstack เวอร์ชันเก่าอยู่แล้ว อยากได้**โค้ดใหม่**อย่างเดียว?
+**ไม่ต้องดาวน์โหลดใหม่ทั้งชุด** — `stack\` (binary), `versions\` (โค้ดแอป), `config\`,
+`data\` (ฐานข้อมูล) และ junction ที่ `www\` **อยู่ครบเหมือนเดิมทุกอย่าง**
+ระบบจะ** patch เฉพาะไฟล์โค้ด** เท่านั้น
+
+### 1.3.7 ขึ้นไป — คำสั่งเดียว
+
+```cmd
+cd /d D:\aptstack
+aptstack update           :: ดึง release ใหม่จาก GitHub (zip + sha256) แล้ว apply
+aptstack update check     :: ดู local vs remote อย่างเดียว (ไม่เขียนไฟล์)
+aptstack restart          :: ใช้ templates/โค้ด ใหม่
+aptstack doctor           :: ตรวจสุขภาพ
+```
+
+`aptstack update` **เขียนทับเฉพาะโค้ด** (`.ps1` / `.cmd` / `templates\` / `docs\` /
+`tools\` / `examples\` / `service\` / `VERSION` / README …) — **ไม่แตะ**:
+
+| เก็บไว้เหมือนเดิม | คือ |
+|---|---|
+| `stack\` | PHP / Apache / MariaDB ที่คุณลงไว้ |
+| `versions\` | โค้ดแอปของคุณ |
+| `config\` | `stack.json`, cert, ini ที่ generate |
+| `data\` | ฐานข้อมูล + dumps |
+| `downloads\`, `logs\`, `bin\` | cache, log, service ที่ compile แล้ว |
+| junction ที่ `www\` | `www\app` → `versions\<active>` (และ alias ตัวอื่น) |
+
+โค้ดเดิมถูก backup ไว้ที่ `logs\update-bak-*` — ย้อนได้ถ้าพัง
+
+โหมดอื่น: `aptstack update zip` · `aptstack update git` (ถ้าโฟลเดอร์นี้ clone จาก repo นี้) ·
+`aptstack update force` — ดูเพิ่ม: `aptstack update -h`
+
+### เก่ากว่า 1.3.7 — bootstrap ครั้งเดียว
+
+เวอร์ชันเก่ายัง**ไม่มี**คำสั่ง `aptstack update` — ทำครั้งเดียว ครั้งต่อไปใช้คำสั่งได้เลย:
+
+1. โหลด `aptstack-<version>.zip` (+ `.sha256`) จาก
+   [GitHub Releases](https://github.com/tps2015gh/aptstack/releases) (~300 KB — มีแต่โค้ด)
+2. **แตกแล้ว copy ทับโฟลเดอร์เดิม** — ตัว zip มี**เฉพาะไฟล์ที่ git track** (โฟลเดอร์บนสุดชื่อ
+   `aptstack\`) ไม่มี `stack\`, `versions\`, `config\`, `data\` อยู่ในนั้น → ของคุณไม่มีทางถูกลบ:
+
+   ```powershell
+   # PowerShell — $old = path ของ aptstack เดิม
+   Expand-Archive .\aptstack-1.3.7.zip -DestinationPath .\_upd -Force
+   Copy-Item .\_upd\aptstack\* $old -Recurse -Force
+   Remove-Item .\_upd -Recurse -Force
+   ```
+
+   ทางลัด: ถ้าโฟลเดอร์เดิม**ชื่อ `aptstack`** อยู่แล้ว → แตก**ลงโฟลเดอร์แม่** ทับด้วย `-Force`
+   (โฟลเดอร์บนสุดของ zip จะ merge ลงของเดิม):
+
+   ```powershell
+   # เช่น โฟลเดอร์คือ D:\aptstack → รันจาก D:\
+   Expand-Archive .\aptstack-1.3.7.zip -DestinationPath .\ -Force
+   ```
+
+3. เสร็จแล้ว — โค้ดใหม่ + **binary/แอป/DB อยู่ครบ** จากนี้ไปใช้ `aptstack update`
+   patch ทับได้เรื่อย ๆ **ไม่ต้องโหลดชุดเต็มอีกเลย**
+
+```cmd
+aptstack doctor            :: เช็ค junction www\app + ความปลอดภัย
+aptstack restart
+```
 
 ---
 

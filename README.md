@@ -76,6 +76,73 @@ aptstack service install
 aptstack service start
 ```
 
+## Update from an older version (no full re-download)
+
+Already running aptstack and just want the **new code**? You do **not** need to download
+everything again — your `stack\` (binaries), `versions\` (apps), `config\`, `data\` (DB)
+and `www\` junctions **stay exactly as they are**. Only the code files are patched.
+
+### 1.3.7 and newer — one command
+
+```cmd
+cd /d D:\aptstack
+aptstack update           :: fetch latest GitHub release (zip + SHA256) and apply
+aptstack update check     :: see local vs remote version only (writes nothing)
+aptstack restart          :: pick up new templates / code
+aptstack doctor           :: health check
+```
+
+`aptstack update` **only overwrites code** (`.ps1` / `.cmd` / `templates\` / `docs\` /
+`tools\` / `examples\` / `service\` / `VERSION` / READMEs …). It never touches:
+
+| Kept as-is | Meaning |
+|---|---|
+| `stack\` | PHP / Apache / MariaDB binaries you installed |
+| `versions\` | your app source code |
+| `config\` | `stack.json`, certs, generated ini |
+| `data\` | databases + dumps |
+| `downloads\`, `logs\`, `bin\` | cache, logs, compiled service host |
+| `www\` junctions | `www\app` → `versions\<active>` (and aliases) |
+
+A backup of the previous code lands in `logs\update-bak-*` so you can roll back.
+
+Other modes: `aptstack update zip` · `aptstack update git` (if this folder is a clone of
+this repo) · `aptstack update force` — see `aptstack update -h`.
+
+### Older than 1.3.7 — one-time bootstrap
+
+Those builds do **not** have `aptstack update` yet. Bootstrap once, then use the command
+forever after:
+
+1. Download the latest `aptstack-<version>.zip` (+ `.sha256`) from
+   [GitHub Releases](https://github.com/tps2015gh/aptstack/releases) (~300 KB — code only).
+2. Extract and **copy the code over your existing folder, overwriting**. The zip contains
+   *only* git-tracked code (top folder `aptstack\`) — no `stack\`, `versions\`,
+   `config\`, `data\` — so nothing of yours can be wiped:
+
+   ```powershell
+   # PowerShell — $old = path to your existing aptstack folder
+   Expand-Archive .\aptstack-1.3.7.zip -DestinationPath .\_upd -Force
+   Copy-Item .\_upd\aptstack\* $old -Recurse -Force
+   Remove-Item .\_upd -Recurse -Force
+   ```
+
+   Shortcut: if your folder is already named `aptstack`, extract **into its parent**
+   with `-Force` (zip’s top folder merges over it):
+
+   ```powershell
+   # e.g. folder is D:\aptstack → run from D:\
+   Expand-Archive .\aptstack-1.3.7.zip -DestinationPath .\ -Force
+   ```
+
+3. You are now on the new version **with all binaries/apps/DB intact**. From here on:
+   `aptstack update` patches in place — never download the full bundle again.
+
+```cmd
+aptstack doctor            :: confirm junction www\app + security still OK
+aptstack restart
+```
+
 ## Layout
 
 ```
@@ -143,6 +210,7 @@ are ignored on purpose (this repo is public).
 | `aptstack start` / `stop` / `restart` | stack lifecycle |
 | `aptstack status` | running? which version? |
 | `aptstack doctor` | security + health check |
+| `aptstack update [check\|zip\|git\|force]` | self-update code from GitHub (release zip + SHA256 or git pull) — **never touches `stack\` / `versions\` / `config\` / `data\`** |
 | `aptstack backup [file]` | dump all databases → `data\dumps\` |
 | `aptstack seed` | import sample database (`aptstack_demo`) |
 | `aptstack import <file.sql\|.sql.zip> [db]` | import dump into database (creates DB, rewrites `USE`, Thai-safe) |
