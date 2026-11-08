@@ -2,6 +2,17 @@
 
 ## 1.3.7 — 2026-11-04
 
+### Added
+
+- **`aptstack update`** (alias: `upgrade`) — อัปเดตโค้ดจาก GitHub คล้าย `apt-get update`
+  - **release zip + SHA256** (หลัก): ดึง release ล่าสุดจาก GitHub API → ตรวจ `.sha256` →
+    แตก → copy **เฉพาะโค้ด** (ps1/cmd/md/templates/docs/tools/…) — **ไม่แตะ** config/data/versions/stack/downloads/logs/www junction
+  - **`git pull --ff-only`** (ถ้ามี `.git` + origin = aptstack): ตรวจ dirty tree ก่อน · fetch origin/main
+  - **`aptstack update check`** — ดู local vs release vs main อย่างเดียว (ไม่เขียนไฟล์)
+  - **`update zip` / `update git` / `update force`** — บังคับวิธี / ข้ามตรวจเวอร์ชัน
+  - backup โค้ดเดิม (`aptstack.ps1`/VERSION/…) ไว้ `logs\update-bak-*` ก่อนเขียนทับ
+  - ไม่มี release → fallback branch zip ของ `main` (แจ้งว่าไม่มี checksum)
+
 ### Fixed
 
 - **`www\<appAlias>` ต้องเป็น junction เท่านั้น** — หลัง copy จากโฟลเดอร์อื่น

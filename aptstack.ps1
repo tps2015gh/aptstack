@@ -5839,6 +5839,353 @@ function Cmd-Git($action, $name) {
     }
 }
 
+# ---------------------------------------------------------------- update (self-update from GitHub)
+$Script:UpdateRepo = 'tps2015gh/aptstack'
+
+function Get-LocalAppVersion {
+    $f = Join-Path $Root 'VERSION'
+    if (Test-Path $f) { return ((Get-Content $f -Raw -EA SilentlyContinue) -replace '\s+', '').Trim() }
+    return '0.0.0'
+}
+
+function Get-GitHubLatestRelease {
+    # คืน @{ Tag; Version; ZipUrl; ShaUrl } หรือ $null (ไม่มี release / เน็ต fail)
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $api = "https://api.github.com/repos/$Script:UpdateRepo/releases/latest"
+    $r = $null
+    try {
+        $r = Invoke-RestMethod -Uri $api -UseBasicParsing -TimeoutSec 30 -Headers @{ 'User-Agent' = 'aptstack' }
+    } catch {
+        $txt = Get-WebText $api
+        if ($txt) { try { $r = $txt | ConvertFrom-Json } catch { $r = $null } }
+    }
+    if (-not $r) { return $null }
+    $tag = "$($r.tag_name)"
+    $ver = $tag -replace '^v', ''
+    $zips = @($r.assets | Where-Object { $_.name -match '\.zip$' -and $_.name -notmatch '\.sha256(\.zip)?$' })
+    $shas = @($r.assets | Where-Object { $_.name -match '\.zip\.sha256$' })
+    if ($zips.Count -eq 0) { return $null }
+    return [pscustomobject]@{
+        Tag    = $tag
+        Version = $ver
+        Name   = $zips[0].name
+        ZipUrl = $zips[0].browser_download_url
+        ShaUrl = if ($shas.Count -gt 0) { $shas[0].browser_download_url } else { '' }
+    }
+}
+
+function Get-RemoteMainVersion {
+    # อ่าน VERSION จาก main ตรง ๆ (ใช้ตอนไม่มี release หรือเทียบ dev branch)
+    $txt = Get-WebText "https://raw.githubusercontent.com/$Script:UpdateRepo/main/VERSION"
+    if ($txt) { return ((($txt -split "`r?`n")[0]) -replace '\s+', '').Trim() }
+    return $null
+}
+
+function Test-VersionNewer([string]$Remote, [string]$Local) {
+    try { return ([version]$Remote -gt [version]$Local) }
+    catch { return ("$Remote" -ne "$Local") }
+}
+
+function Invoke-UpdateDownload([string]$Url, [string]$OutFile) {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $dir = Split-Path -Parent $OutFile
+    if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -TimeoutSec 300
+    } catch {
+        $ok = $false
+        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+            $p = Start-Process -FilePath 'curl.exe' -ArgumentList @('-sL', '--fail', '--max-time', '300', '-A', 'aptstack', "`"$Url`"", '-o', "`"$OutFile`"") -Wait -PassThru -NoNewWindow
+            if ($p.ExitCode -eq 0 -and (Test-Path $OutFile) -and ((Get-Item $OutFile -EA SilentlyContinue).Length -gt 0)) { $ok = $true }
+        }
+        if (-not $ok) {
+            Remove-Item -LiteralPath $OutFile -Force -EA SilentlyContinue
+            throw "ดาวน์โหลดไม่สำเร็จ: $Url ($($_.Exception.Message))"
+        }
+    }
+}
+
+function Test-Sha256File([string]$ZipPath, [string]$ShaText) {
+    # sha256 file รูปแบบ: <HASH>  <filename>  (case-insensitive)
+    # ใช้ .NET SHA256 ตรง ๆ — Get-FileHash บาง environment (module ไม่โหลด) หายไป
+    if (-not $ShaText) { return $null }   # ไม่มี checksum = ข้าม (คืน $null = ไม่รู้)
+    $m = [regex]::Match("$ShaText", '([0-9a-fA-F]{64})')
+    if (-not $m.Success) { return $null }
+    $want = $m.Groups[1].Value.ToLowerInvariant()
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [IO.File]::OpenRead($ZipPath)
+    try { $hash = $sha.ComputeHash($stream) } finally { $stream.Dispose(); $sha.Dispose() }
+    $got = ([BitConverter]::ToString($hash) -replace '-', '').ToLowerInvariant()
+    return ($want -eq $got)
+}
+
+function Copy-UpdateTree([string]$src, [string]$dst) {
+    # คัดลอก "โค้ด" จาก release zip เข้า root — ห้ามแตะ state ของผู้ใช้
+    # src = โฟลเดอร์ที่มี aptstack.ps1 อยู่ข้างใน (แตก zip แล้ว)
+    $protect = @('config', 'data', 'versions', 'stack', 'downloads', 'logs', 'bin', 'dist', 'db', 'scripts', '.git', 'runtime')
+    $codeDirs = @('docs', 'examples', 'service', 'templates', 'tools')
+    $n = 0
+    foreach ($f in @(Get-ChildItem -LiteralPath $src -File -Force -ErrorAction SilentlyContinue)) {
+        if ($f.Name -eq 'aptstack-report.html') { continue }   # artifact ที่ generate ท้ายเครื่อง
+        Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $dst $f.Name) -Force
+        $n++
+    }
+    foreach ($d in $codeDirs) {
+        $s = Join-Path $src $d
+        if (-not (Test-Path $s)) { continue }
+        $dd = Join-Path $dst $d
+        # /XJ ไม่ตาม junction (กัน www\app ถูก copy ทับ) · ไม่ลบของฝั่ง destination
+        robocopy $s $dd /E /XJ /NFL /NDL /NJH /NJS /R:1 /W:1 /MT:8 | Out-Null
+        if ($LASTEXITCODE -ge 8) { Write-Warn2 "copy $d ไม่สมบูรณ์ (robocopy exit $LASTEXITCODE)" }
+        else { $n++ }
+    }
+    # www: เฉพาะไฟล์ที่ zip มี (router.php / aptstack-console) — ห้ามแตะ junction app / phpmyadmin
+    $wwwSrc = Join-Path $src 'www'
+    if (Test-Path $wwwSrc) {
+        $wwwDst = Join-Path $dst 'www'
+        foreach ($item in @(Get-ChildItem -LiteralPath $wwwSrc -Force -ErrorAction SilentlyContinue)) {
+            $destPath = Join-Path $wwwDst $item.Name
+            $di = Get-Item -LiteralPath $destPath -Force -ErrorAction SilentlyContinue
+            if ($di -and ($di.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
+            if ($item.PSIsContainer) {
+                robocopy $item.FullName $destPath /E /XJ /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
+                $n++
+            } else {
+                Copy-Item -LiteralPath $item.FullName -Destination $destPath -Force
+                $n++
+            }
+        }
+    }
+    return $n
+}
+
+function Update-FromReleaseZip($Rel, [string]$LocalVer, [bool]$Force) {
+    Write-Head "ดาวน์โหลด release $($Rel.Tag)"
+    Write-Info $Rel.ZipUrl
+    Ensure-Dirs
+    $work = Join-Path $Script:P.Tmp ('update-' + (Get-Date -Format 'yyyyMMdd_HHmmss'))
+    if (Test-Path $work) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
+    New-Item -ItemType Directory -Path $work -Force | Out-Null
+    try {
+        $zip = Join-Path $work $Rel.Name
+        Invoke-UpdateDownload $Rel.ZipUrl $zip
+        Write-Ok ("ดาวน์โหลดแล้ว ({0:N2} MB)" -f ((Get-Item $zip).Length / 1MB))
+
+        if ($Rel.ShaUrl) {
+            $shaText = $null
+            try {
+                $shaTmp = Join-Path $work 'expected.sha256'
+                Invoke-UpdateDownload $Rel.ShaUrl $shaTmp
+                $shaText = Get-Content $shaTmp -Raw
+            } catch { Write-Warn2 "โหลด .sha256 ไม่ได้: $($_.Exception.Message)" }
+            $ok = Test-Sha256File $zip $shaText
+            if ($ok -eq $true) { Write-Ok 'SHA256 ตรงกับ release' }
+            elseif ($ok -eq $false) {
+                Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+                throw 'SHA256 ไม่ตรง — ไฟล์เสียหาย/ถูกแก้ ยกเลิก (ไม่เขียนทับโค้ด)'
+            }
+            else { Write-Warn2 'ไม่มี checksum ให้เทียบ — ข้ามการ verify' }
+        } else { Write-Warn2 'release นี้ไม่มี .sha256 — ข้ามการ verify' }
+
+        Write-Info 'แตก zip...'
+        $ex = Join-Path $work 'x'
+        Expand-Archive -Path $zip -DestinationPath $ex -Force
+        # โครงสร้าง zip = aptstack/<files> หรือ aptstack-<branch>/<files> (branch archive)
+        $srcRoot = $null
+        if (Test-Path (Join-Path $ex 'aptstack.ps1')) { $srcRoot = $ex }
+        else {
+            $kids = @(Get-ChildItem $ex -Directory -Force -ErrorAction SilentlyContinue)
+            foreach ($k in $kids) {
+                if (Test-Path (Join-Path $k.FullName 'aptstack.ps1')) { $srcRoot = $k.FullName; break }
+            }
+        }
+        if (-not $srcRoot) { throw 'zip ไม่มี aptstack.ps1 — โครงสร้างไม่ตรง' }
+
+        $zipVer = if (Test-Path (Join-Path $srcRoot 'VERSION')) { ((Get-Content (Join-Path $srcRoot 'VERSION') -Raw) -replace '\s+', '').Trim() } else { $Rel.Version }
+        if ((Test-VersionNewer $LocalVer $zipVer) -and -not $Force) {
+            Write-Warn2 "local ($LocalVer) ใหม่กว่า release นี้ ($zipVer) — ไม่เขียนทับ (ใช้ aptstack update force ถ้าตั้งใจ)"
+            return $false
+        }
+
+        # backup โค้ด root ตัวสำคัญก่อนเขียนทับ (ย้อนได้ถ้าพัง)
+        $bak = Join-Path $Script:P.Logs ("update-bak-" + (Get-Date -Format 'yyyyMMdd_HHmmss'))
+        New-Item -ItemType Directory -Path $bak -Force | Out-Null
+        foreach ($f in @('aptstack.ps1', 'VERSION', 'aptstack.cmd', 'as.cmd', 'setup.ps1', 'service.ps1')) {
+            $p = Join-Path $Root $f
+            if (Test-Path $p) { Copy-Item $p $bak -Force }
+        }
+        Write-Info "backup โค้ดเดิมไว้: $bak"
+
+        $n = Copy-UpdateTree $srcRoot $Root
+        $newVer = Get-LocalAppVersion
+        Write-Ok "อัปเดตโค้ดแล้ว: $LocalVer -> $newVer  (แตะ ~$n path — config/data/versions/stack ไม่โดน)"
+        return $true
+    } finally {
+        try { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+    }
+}
+
+function Update-FromGit([string]$LocalVer, [bool]$Force) {
+    $gitExe = Get-Command git -ErrorAction SilentlyContinue
+    if (-not $gitExe) { throw 'ไม่พบ git.exe ใน PATH — ใช้: aptstack update zip' }
+    if (-not (Test-Path (Join-Path $Root '.git'))) { throw 'โฟลเดอร์นี้ไม่มี .git — ใช้: aptstack update zip' }
+
+    $oldEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $remoteUrl = "$(& git -C $Root remote get-url origin 2>$null | Select-Object -First 1)"
+        if ($remoteUrl -notmatch 'tps2015gh/aptstack') {
+            throw "origin ไม่ใช่ repo aptstack ทางการ ($remoteUrl) — ใช้: aptstack update zip"
+        }
+        $dirty = @(& git -C $Root status --porcelain 2>$null)
+        if ($dirty.Count -gt 0 -and -not $Force) {
+            Write-Warn2 "มีไฟล์ที่ยังไม่ commit $($dirty.Count) รายการ — git pull อาจชน/ทับของคุณ"
+            $dirty | Select-Object -First 8 | ForEach-Object { Write-Info "  $_" }
+            if (-not (Confirm-Action 'ยังจะ pull ต่อไหม? (แนะนำ: commit ก่อน แล้วค่อย update)')) {
+                Write-Info 'ยกเลิก — commit ให้หมดแล้วรัน aptstack update git ใหม่'
+                return $false
+            }
+        }
+        Write-Head 'git fetch origin main'
+        & git -C $Root fetch --quiet origin main 2>&1 | Out-Null
+        $remoteVer = "$(& git -C $Root show origin/main:VERSION 2>$null | Select-Object -First 1)"
+        $remoteVer = ($remoteVer -replace '\s+', '').Trim()
+        if (-not $remoteVer) { throw 'อ่าน VERSION บน origin/main ไม่ได้ — ลอง aptstack update zip' }
+        Write-Info "local  $LocalVer"
+        Write-Info "origin $remoteVer  (origin/main)"
+        if (-not (Test-VersionNewer $remoteVer $LocalVer) -and -not $Force) {
+            if ($remoteVer -eq $LocalVer) { Write-Ok 'เป็นเวอร์ชันล่าสุดบน origin/main แล้ว' }
+            else { Write-Ok "local ($LocalVer) ใหม่กว่า origin/main ($remoteVer) — ข้าม" }
+            return $false
+        }
+        if (-not (Confirm-Action "อัปเดตโค้ดผ่าน git ($LocalVer -> $remoteVer) — แตะเฉพาะไฟล์ใน repo?")) {
+            Write-Info 'ยกเลิก'; return $false
+        }
+        Write-Head 'git merge --ff-only origin/main'
+        $out = & git -C $Root merge --ff-only origin/main 2>&1
+        $rc = $LASTEXITCODE
+        $out | ForEach-Object { Write-Info "$_" }
+        if ($rc -ne 0) { throw "git merge ไม่สำเร็จ (exit $rc) — ใช้: aptstack update zip" }
+        $newVer = Get-LocalAppVersion
+        Write-Ok "อัปเดตผ่าน git แล้ว: $LocalVer -> $newVer"
+        return $true
+    } finally { $ErrorActionPreference = $oldEap }
+}
+
+function Cmd-Update([string]$act, [string]$mode) {
+    # aptstack update           ตรวจ release บน GitHub แล้วอัปเดตโค้ดถ้ามีตัวใหม่ (zip + sha256)
+    # aptstack update check      ดูเวอร์ชัน local vs GitHub อย่างเดียว (ไม่เขียนอะไร)
+    # aptstack update zip        บังคับทาง release zip (ไม่ใช้ git)
+    # aptstack update git        บังคับทาง git pull (ต้องมี .git + origin = aptstack)
+    # aptstack update force      อัปเดตแม้เวอร์ชันเท่ากัน / local ใหม่กว่า / มีไฟล์ dirty
+    $sub = "$act".Trim().ToLowerInvariant()
+    if (-not $sub -and "$mode") { $sub = "$mode".Trim().ToLowerInvariant() }
+    if ($sub -in @('-h', '--help', 'h', '?')) {
+        Write-Head 'aptstack update — อัปเดตโค้ดจาก GitHub (แตะเฉพาะโค้ด)'
+        Write-Info 'aptstack update           ตรวจ release ใหม่ + ดาวน์โหลด zip + sha256 แล้ว apply'
+        Write-Info 'aptstack update check     ดู local vs GitHub อย่างเดียว (ไม่แก้ไฟล์)'
+        Write-Info 'aptstack update zip       บังคับใช้ release zip'
+        Write-Info 'aptstack update git       บังคับใช้ git pull (มี .git + origin aptstack)'
+        Write-Info 'aptstack update force     ข้ามตรวจเวอร์ชัน/ dirty tree (ระวัง)'
+        Write-Info ''
+        Write-Info 'ไม่แตะ: config\ data\ versions\ stack\ downloads\ logs\ www junction'
+        Write-Info 'แนะนำหลังอัปเดต: aptstack doctor  แล้ว  aptstack restart'
+        return
+    }
+    if ($sub -notin @('', 'check', 'zip', 'git', 'force', 'force-zip', 'force-git')) {
+        throw "ไม่รู้จัก 'aptstack update $act' — ใช้ได้: (ว่าง) | check | zip | git | force"
+    }
+    $force = $sub -in @('force', 'force-zip', 'force-git')
+    $method = switch ($sub) {
+        'zip' { 'zip' } 'force-zip' { 'zip' }
+        'git' { 'git' } 'force-git' { 'git' }
+        default { '' }   # auto
+    }
+
+    $local = Get-LocalAppVersion
+    Write-Head 'aptstack update — โค้ดจาก GitHub (config/data/versions/stack ไม่โดน)'
+    Write-Info "local version : $local"
+    Write-Info "repo          : https://github.com/$Script:UpdateRepo"
+
+    # ---- check เท่านั้น ----
+    if ($sub -eq 'check') {
+        $rel = $null
+        try { $rel = Get-GitHubLatestRelease } catch { Write-Warn2 "API ล้มเหลว: $($_.Exception.Message)" }
+        $remoteMain = $null
+        try { $remoteMain = Get-RemoteMainVersion } catch { }
+        if ($rel) {
+            Write-Info "latest release: $($rel.Version)  ($($rel.Tag))"
+            Write-Info "zip           : $($rel.Name)"
+            if (Test-VersionNewer $rel.Version $local) { Write-Ok "มี release ใหม่กว่า ($local -> $($rel.Version)) — รัน: aptstack update" }
+            elseif ($rel.Version -eq $local) { Write-Ok 'local = release ล่าสุด' }
+            else { Write-Ok "local ($local) ใหม่กว่า release ล่าสุด ($($rel.Version)) — dev/ยังไม่ออก release" }
+        } else { Write-Warn2 'อ่าน release จาก GitHub ไม่ได้ (เน็ต / ยังไม่มี release)' }
+        if ($remoteMain) {
+            Write-Info "main VERSION  : $remoteMain"
+            if (Test-VersionNewer $remoteMain $local) { Write-Info 'main ใหม่กว่า local — aptstack update git (ถ้ามี .git) หรือรอ release zip' }
+        }
+        return
+    }
+
+    # ---- เลือก method: auto = git ถ้ามี .git+origin aptstack ไม่งั้น zip ----
+    if (-not $method) {
+        $hasGit = (Test-Path (Join-Path $Root '.git')) -and [bool](Get-Command git -ErrorAction SilentlyContinue)
+        $method = if ($hasGit) { 'git' } else { 'zip' }
+    }
+    Write-Info "method        : $method$(if ($force) { '  (force)' })"
+
+    $rel = $null
+    if ($method -eq 'zip' -or $sub -eq 'check') {
+        try { $rel = Get-GitHubLatestRelease } catch { }
+        if ($method -eq 'zip' -and -not $rel) {
+            # ไม่มี release -> ลอง branch zip ของ main (ไม่มี sha256)
+            $mv = Get-RemoteMainVersion
+            if (-not $mv) { throw 'อ่านข้อมูลจาก GitHub ไม่ได้ (เน็ต?) — ลองใหม่ หรือ aptstack update git' }
+            if (-not (Test-VersionNewer $mv $local) -and -not $force) {
+                if ($mv -eq $local) { Write-Ok "เป็นเวอร์ชันล่าสุดบน main แล้ว ($local)"; return }
+                Write-Ok "local ($local) ใหม่กว่า main ($mv) — ข้าม"; return
+            }
+            $rel = [pscustomobject]@{
+                Tag = "main ($mv)"; Version = $mv; Name = 'main.zip'
+                ZipUrl = "https://github.com/$Script:UpdateRepo/archive/refs/heads/main.zip"
+                ShaUrl = ''
+            }
+            Write-Warn2 'ไม่พบ GitHub Release — ใช้ branch zip ของ main (ไม่มี .sha256)'
+        }
+    }
+
+    $changed = $false
+    if ($method -eq 'git') {
+        $changed = Update-FromGit $local $force
+    } else {
+        if (-not $rel) { throw 'ไม่พบ release บน GitHub — ลอง aptstack update git หรือใหม่ภายหลัง' }
+        Write-Info "latest release: $($rel.Version)  ($($rel.Tag))"
+        if (-not $force) {
+            if (-not (Test-VersionNewer $rel.Version $local)) {
+                if ($rel.Version -eq $local) { Write-Ok "เป็น release ล่าสุดแล้ว ($local) — ไม่มีอะไรอัปเดต"; return }
+                Write-Ok "local ($local) ใหม่กว่า release ($($rel.Version)) — ข้าม (บังคับ: aptstack update force)"
+                return
+            }
+            if (-not (Confirm-Action "อัปเดตโค้ด $local -> $($rel.Version) (release zip + sha256)?")) {
+                Write-Info 'ยกเลิก'; return
+            }
+        } else {
+            if (-not (Confirm-Action "บังคับ apply release $($rel.Version) ทับ local $local?")) {
+                Write-Info 'ยกเลิก'; return
+            }
+        }
+        $changed = Update-FromReleaseZip $rel $local $force
+    }
+
+    if ($changed) {
+        Write-Host ''
+        Write-Head 'อัปเดตเสร็จ — ขั้นถัดไป'
+        Write-Info '  aptstack doctor     ตรวจความเรียบร้อย (junction www\app ด้วย)'
+        Write-Info '  aptstack restart    ใช้โค้ด/ templates ใหม่ (ถ้า stack กำลังรัน)'
+        Write-Info '  backup โค้ดเดิมอยู่ใน logs\update-bak-* (ย้อนได้ถ้าพัง)'
+    }
+}
+
 function Cmd-Help {
     Write-Head 'aptstack — portable PHP / MariaDB / app-version manager'
     @'
@@ -5854,6 +6201,9 @@ function Cmd-Help {
   aptstack list --available        ดูเวอร์ชันที่ "โหลดได้" จากเว็บทางการ (php|mysql|apache)
   aptstack start                   เริ่ม MariaDB + Web
   aptstack doctor                  ตรวจสุขภาพ + ช่องโหว่ RCE
+  aptstack update [check|zip|git|force]
+                                   อัปเดตโค้ดจาก GitHub (release zip + sha256 หรือ git pull)
+                                   check = ดูเวอร์ชันอย่างเดียว · ไม่แตะ config/data/versions/stack
 
   ── สลับเวอร์ชัน (ง่ายสุด) ──────────────────────────
   aptstack use                     เมนูเลือก (แอป + PHP)
@@ -6089,6 +6439,8 @@ switch ($Command.ToLower()) {
     'diff'        { Cmd-Diff $Action $Value $Extra }
     'import-origin' { Cmd-ImportOrigin }
     'origin'      { Cmd-ImportOrigin }
+    'update'      { Cmd-Update $Action $Value }
+    'upgrade'     { Cmd-Update $Action $Value }
     'git'         { Cmd-Git $Action $Value }
     'clone'       { Cmd-Clone $Action $Value $Extra }
     'remove'      { Cmd-Remove $Action $Value $Extra }
