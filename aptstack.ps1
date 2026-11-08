@@ -1206,6 +1206,116 @@ function Set-AppLink([string]$appName) {
     New-Item -ItemType Junction -Path $link -Target $target | Out-Null
 }
 
+function New-MainAppLinkFromConfig {
+    # สร้าง www\<appAlias> -> versions\<app> จาก config (ใช้ได้ทั้งตอนหาย/ junction ชี้เป้าตาย)
+    # คืน $true ถ้ามี junction ใช้ได้แล้ว
+    $cfg = Get-Config
+    $link = Join-Path $Script:P.Www $cfg.appAlias
+    Ensure-Dirs
+    $existing = Get-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue
+    if ($existing) {
+        if ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            if (Test-Path -LiteralPath $link) { return $true }
+            try { [void][IO.Directory]::Delete($link, $false) } catch { return $false }
+        } else { return $false }   # โฟลเดอร์จริง — ให้ Repair-MainAppLink จัดการก่อน
+    }
+    $name = "$($cfg.app)"
+    if (-not $name -or -not (Test-Path (Join-Path $Script:P.Versions $name))) {
+        $apps = @(Get-AppVersions)
+        if ($apps.Count -eq 0) { return $false }
+        $pick = @($apps | Where-Object { $_.Usable } | Select-Object -Last 1)
+        if ($pick.Count -eq 0) { $pick = @($apps[-1]) }
+        $name = $pick[0].Name
+        $cfg.app = $name
+        Save-Config $cfg
+    }
+    $target = Join-Path $Script:P.Versions $name
+    try {
+        New-Item -ItemType Junction -Path $link -Target $target -ErrorAction Stop | Out-Null
+        return $true
+    } catch {
+        Write-Warn2 "สร้าง junction www\$($cfg.appAlias) ไม่ได้: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Repair-MainAppLink {
+    # ตรวจ www\<appAlias> หลัง copy / ตอน doctor:
+    #   - junction ใช้ได้          -> ok
+    #   - หาย / ชี้เป้าตาย         -> สร้างใหม่จาก config
+    #   - โฟลเดอร์ว่าง (ไม่ใช่ j.) -> ลบอัตโนมัติ (ไม่มีไฟล์) แล้วสร้าง junction
+    #   - โฟลเดอร์จริง (ไม่ใช่ j.)-> WARN + ยืนยันลบ (web จะ 404/500) แล้วสร้าง junction
+    # คืน: ok | created | fixed | missing | declined | not-junction | broken
+    param([string]$Where = '')
+    $cfg = Get-Config
+    $alias = "$($cfg.appAlias)"
+    $link = Join-Path $Script:P.Www $alias
+    $ctx = if ($Where) { "  [$Where]" } else { '' }
+    $i = Get-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue
+
+    if (-not $i) {
+        if (New-MainAppLinkFromConfig) {
+            $t = "$(Get-Item -LiteralPath $link -Force).Target"
+            Write-Warn2 "www\$alias หายไป — สร้าง junction ใหม่ -> $(Split-Path $t -Leaf)$ctx"
+            return 'created'
+        }
+        return 'missing'
+    }
+
+    $isJunction = [bool]($i.Attributes -band [IO.FileAttributes]::ReparsePoint)
+    if ($isJunction) {
+        if (Test-Path -LiteralPath $link) { return 'ok' }
+        # junction ชี้ไปเป้าที่ถูกลบแล้ว
+        try { [void][IO.Directory]::Delete($link, $false) } catch { return 'broken' }
+        if (New-MainAppLinkFromConfig) {
+            $t = "$(Get-Item -LiteralPath $link -Force).Target"
+            Write-Warn2 "junction www\$alias ชี้เป้าหาย — สร้างใหม่ -> $(Split-Path $t -Leaf)$ctx"
+            return 'created'
+        }
+        return 'missing'
+    }
+
+    # ---- ไม่ใช่ junction: copy โฟลเดอร์ทับ / copy แบบไม่รักษา junction ----
+    $kids = @(Get-ChildItem -LiteralPath $link -Force -ErrorAction SilentlyContinue)
+    $empty = ($kids.Count -eq 0)
+
+    if ($empty) {
+        Write-Warn2 "www\$alias เป็นโฟลเดอร์ว่าง (ไม่ใช่ junction) — web จะ 404/500 / สลับเวอร์ชันไม่ได้$ctx"
+        Write-Info 'โฟลเดอร์ว่าง = ปลอดภัยที่จะลบ แล้วสร้าง junction ใหม่'
+        try { Remove-Item -LiteralPath $link -Recurse -Force -ErrorAction Stop }
+        catch {
+            Write-Err2 "ลบโฟลเดอร์ว่าง www\$alias ไม่ได้: $($_.Exception.Message)"
+            return 'not-junction'
+        }
+        if (New-MainAppLinkFromConfig) {
+            Write-Ok "ลบโฟลเดอร์ว่างแล้ว + สร้าง junction www\$alias ใหม่$ctx"
+            return 'fixed'
+        }
+        Write-Warn2 'ลบแล้ว แต่ยังสร้าง junction ไม่ได้ (ไม่มี versions\ ให้ชี้) — รัน: aptstack use <version>'
+        return 'missing'
+    }
+
+    $mb = Get-FolderSizeMB $link
+    Write-Warn2 "www\$alias เป็นโฟลเดอร์ธรรมดา (ไม่ใช่ junction)$ctx"
+    Write-Err2 "web server จะ 404/500 · สลับเวอร์ชันไม่ได้ — มีไฟล์จริง $($kids.Count) รายการ (~$mb MB)"
+    Write-Info 'มักเกิดจาก copy โฟลเดอร์ทับ junction — ต้องลบ www\app ออกแล้วสร้าง junction ใหม่'
+    if (-not (Confirm-Action "ลบ www\$alias (ของจริง $($kids.Count) รายการ ~$mb MB) แล้วสร้าง junction ใหม่?")) {
+        Write-Info 'ไม่ลบ — ต้องเอาออกเองก่อน web ถึงจะรันได้ (ไม่งั้น 404/500)'
+        return 'declined'
+    }
+    try { Remove-Item -LiteralPath $link -Recurse -Force -ErrorAction Stop }
+    catch {
+        Write-Err2 "ลบ www\$alias ไม่ได้: $($_.Exception.Message) — ปิด program ที่เปิดโฟลเดอร์นี้ก่อน"
+        return 'not-junction'
+    }
+    if (New-MainAppLinkFromConfig) {
+        Write-Ok "ลบโฟลเดอร์ธรรมดาแล้ว + สร้าง junction www\$alias ใหม่$ctx"
+        return 'fixed'
+    }
+    Write-Warn2 'ลบแล้ว แต่ยังสร้าง junction ไม่ได้ (ไม่มี versions\ ให้ชี้) — รัน: aptstack use <version>'
+    return 'missing'
+}
+
 function Switch-App {
     param([Parameter(Mandatory)][string]$Version, [switch]$NoRestart)
     $hit = Resolve-App $Version
@@ -2335,13 +2445,22 @@ function Cmd-Doctor {
         else { Write-Warn2 'local_infile เปิดอยู่' }
     }
 
-    # 5) app link
+    # 5) app link — www\<appAlias> ต้องเป็น junction เท่านั้น
+    #    (โฟลเดอร์ธรรมดาหลัง copy = web 404/500 · สลับเวอร์ชันไม่ได้)
     $cfg2 = Get-Config
     $link = Join-Path $Script:P.Www $cfg2.appAlias
+    $st = Repair-MainAppLink -Where 'doctor'
     $i = Get-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue
-    if (-not $i) { Write-Err2 "ไม่พบ www\$($cfg2.appAlias)"; $problems++ }
-    elseif (-not ($i.Attributes -band [IO.FileAttributes]::ReparsePoint)) { Write-Warn2 "www\$($cfg2.appAlias) ไม่ใช่ junction — สลับเวอร์ชันไม่ได้" }
-    else { Write-Ok "www\$($cfg2.appAlias) -> $(Split-Path $i.Target -Leaf)" }
+    switch ($st) {
+        'ok' { Write-Ok "www\$($cfg2.appAlias) -> $(Split-Path $i.Target -Leaf) (junction)" }
+        'created' { Write-Ok "www\$($cfg2.appAlias) สร้าง junction ใหม่แล้ว -> $(Split-Path $i.Target -Leaf)" }
+        'fixed' { Write-Ok "www\$($cfg2.appAlias) ซ่อมแล้ว (ลบโฟลเดอร์ธรรมดา + สร้าง junction) -> $(Split-Path $i.Target -Leaf)" }
+        'missing' { Write-Err2 "ไม่พบ www\$($cfg2.appAlias) และสร้าง junction ไม่ได้ (ไม่มี versions\)"; $problems++ }
+        'broken' { Write-Err2 "www\$($cfg2.appAlias) เป็น junction ที่ชี้เป้าหายและสร้างใหม่ไม่ได้"; $problems++ }
+        'declined' { Write-Err2 "www\$($cfg2.appAlias) ยังเป็นโฟลเดอร์ธรรมดา (ไม่ลบ) — web จะ 404/500 · สลับเวอร์ชันไม่ได้"; $problems++ }
+        'not-junction' { Write-Err2 "www\$($cfg2.appAlias) ยังเป็นโฟลเดอร์ธรรมดา — ลบไม่ได้ตอนนี้ (ปิด program ที่ lock แล้วรัน doctor ใหม่)"; $problems++ }
+        default { Write-Err2 "ไม่พบ www\$($cfg2.appAlias)"; $problems++ }
+    }
     if (-not (Test-Path (Join-Path $Script:P.Www 'router.php'))) { Write-Warn2 'ไม่มี www\router.php (built-in server จะ serve static บางกรณีผิด)' }
 
     # 6) ports
@@ -3075,8 +3194,20 @@ function Cmd-ImportRoot([string]$oldRoot, [string]$flags) {
     }
     $sw.Stop()
 
-    # www\app junction ไม่ถูกคัดลอกด้วย /XJ -> สร้างใหม่จาก config ที่เพิ่งย้ายมา
-    try { Sync-AppAliases; Write-Info 'สร้าง junction www\<app> ให้แล้ว (Sync-AppAliases)' }
+    # www\app หลัง copy จากโฟลเดอร์อื่น:
+    #  - junction ไม่ถูกคัดลอกด้วย /XJ -> สร้างใหม่จาก config
+    #  - ถ้า destination มี www\app เป็น "โฟลเดอร์ธรรมดา" (copy ทับ/ไม่รักษา junction)
+    #    web จะ 404/500 -> เตือน + ยืนยันลบ แล้วสร้าง junction ใหม่
+    $stImp = Repair-MainAppLink -Where 'import'
+    switch ($stImp) {
+        'ok' { Write-Ok "www\$((Get-Config).appAlias) เป็น junction อยู่แล้ว" }
+        'created' { Write-Ok "สร้าง junction www\$((Get-Config).appAlias) จาก config แล้ว" }
+        'fixed' { Write-Ok "ซ่อม www\$((Get-Config).appAlias): ลบโฟลเดอร์ธรรมดา + สร้าง junction แล้ว" }
+        'declined' { Write-Warn2 "www\$((Get-Config).appAlias) ยังเป็นโฟลเดอร์ธรรมดา — web จะ 404/500 จนกว่าจะลบเองแล้วรัน aptstack doctor" }
+        'not-junction' { Write-Warn2 "www\$((Get-Config).appAlias) ยังเป็นโฟลเดอร์ธรรมดา — ลบไม่ได้ตอนนี้ (lock) ค่อยรัน aptstack doctor" }
+        default { Write-Warn2 "www\$((Get-Config).appAlias) ยังไม่พร้อม — รัน: aptstack doctor  หรือ  aptstack use <version>" }
+    }
+    try { Sync-AppAliases; Write-Info 'สร้าง junction ชื่ออื่น ๆ ให้แล้ว (Sync-AppAliases)' }
     catch { Write-Warn2 "junction: $($_.Exception.Message)" }
 
     Write-Host ''
