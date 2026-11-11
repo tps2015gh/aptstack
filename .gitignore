@@ -86,3 +86,13 @@ tools/db_manager/db_manager.exe
 # security report (local)
 /aptstack-security-push-report-*.html
 
+
+# local alert asset
+
+
+
+# --- local alert audio assets (never ship) ---
+/tools/alert-5s.wav
+/tools/alert-jingle.wav
+/tools/alert-jingle-80.wav
+/tools/alert-*.wav
