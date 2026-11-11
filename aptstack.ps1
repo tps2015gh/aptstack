@@ -206,6 +206,119 @@ function Get-CurrentAppName {
     return $cfg.app
 }
 
+function Get-NextAppName([string]$fromName) {
+    # สร้างชื่อเวอร์ชันถัดไปโดยคงชื่อหลักไว้ (เปลี่ยนเฉพาะเลข version)
+    #   1.0 -> 1.1 · todo-1.2.0 -> todo-1.2.1 · lands_auth -> lands_auth-1
+    if ([string]::IsNullOrWhiteSpace($fromName)) { return 'app-1' }
+    $next = $null
+    if ($fromName -match '^\d+(?:\.\d+)*$') {
+        $parts = @($fromName -split '\.')
+        $n = 0; [void][int]::TryParse($parts[-1], [ref]$n)
+        $parts[-1] = "$($n + 1)"
+        $next = $parts -join '.'
+    }
+    elseif ($fromName -match '^(.+?)([-_])(v?)(\d+(?:\.\d+)*)$') {
+        $prefix = $Matches[1]; $sep = $Matches[2]; $vtag = $Matches[3]; $ver = $Matches[4]
+        $vp = @($ver -split '\.')
+        $n = 0; [void][int]::TryParse($vp[-1], [ref]$n)
+        $vp[-1] = "$($n + 1)"
+        $next = "$prefix$sep$vtag$($vp -join '.')"
+    }
+    else { $next = "$fromName-1" }
+
+    # ชนโฟลเดอร์เดิม -> bump ต่อ
+    $guard = 0
+    while ((Test-Path (Join-Path $Script:P.Versions $next)) -and $guard -lt 999) {
+        $guard++
+        if ($next -match '^(.+?)([-_])(v?)(\d+(?:\.\d+)*)$') {
+            $prefix = $Matches[1]; $sep = $Matches[2]; $vtag = $Matches[3]; $ver = $Matches[4]
+            $vp = @($ver -split '\.')
+            $n = 0; [void][int]::TryParse($vp[-1], [ref]$n)
+            $vp[-1] = "$($n + 1)"
+            $next = "$prefix$sep$vtag$($vp -join '.')"
+        }
+        elseif ($next -match '^(.*)-(\d+)$') {
+            $n = 0; [void][int]::TryParse($Matches[2], [ref]$n)
+            $next = "$($Matches[1])-$($n + 1)"
+        }
+        else { $next = "$next-1" }
+    }
+    return $next
+}
+
+function Select-CloneAppSource {
+    # เมนูเลือก app ต้นทางสำหรับ clone — แสดงชื่อเวอร์ชันถัดไปเป็น preview ด้วย
+    $apps = @(Get-AppVersions)
+    if ($apps.Count -eq 0) { throw 'ยังไม่มี app — เพิ่มก่อน: aptstack add app <folder|zip>' }
+    $cur = Get-CurrentAppName
+    Write-Host ''
+    Write-Host '  เลือก app ต้นทางที่จะ clone' -ForegroundColor Cyan
+    Write-Host ''
+    for ($i = 0; $i -lt $apps.Count; $i++) {
+        $mark = if ($cur -eq $apps[$i].Name) { '  <- ใช้อยู่' } else { '' }
+        $preview = Get-NextAppName $apps[$i].Name
+        Write-Host ("   {0}) {1,-42} -> {2}{3}" -f ($i + 1), $apps[$i].Name, $preview, $mark)
+    }
+    Write-Host ''
+    $ans = Read-Host "  พิมพ์หมายเลข 1-$($apps.Count) แล้ว Enter (Enter เปล่า = ยกเลิก)"
+    if ([string]::IsNullOrWhiteSpace($ans)) { Write-Info 'ยกเลิก'; return $null }
+    $n = 0
+    if (-not [int]::TryParse($ans, [ref]$n) -or $n -lt 1 -or $n -gt $apps.Count) { throw "ไม่ถูกต้อง: '$ans'" }
+    return $apps[$n - 1]
+}
+
+function Select-CloneKind {
+    # ถามก่อนว่าจะ clone อะไร: app | mysql
+    Write-Host ''
+    Write-Host '  clone — เลือกประเภท' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host '   1) app    คัดลอกโค้ด app (versions\) — DB เดิม · สลับด้วย use ทีหลัง' -ForegroundColor White
+    Write-Host '   2) mysql  คัดลอก datadir (data\) — ต้อง stop ก่อน · ใช้กับ engine ใหม่' -ForegroundColor White
+    Write-Host ''
+    $ans = Read-Host '  พิมพ์ 1 หรือ 2 แล้ว Enter (Enter เปล่า = ยกเลิก)'
+    if ([string]::IsNullOrWhiteSpace($ans)) { Write-Info 'ยกเลิก'; return $null }
+    $n = 0
+    if (-not [int]::TryParse($ans, [ref]$n)) { throw "ไม่ถูกต้อง: '$ans'" }
+    if ($n -eq 1) { return 'app' }
+    if ($n -eq 2) { return 'mysql' }
+    throw "ไม่ถูกต้อง: '$ans' (ต้องเป็น 1 หรือ 2)"
+}
+
+function Select-CloneMysqlSource {
+    # เมนูเลือก datadir ต้นทางสำหรับ clone mysql
+    $items = @()
+    foreach ($eng in @(Get-MySqlVersions)) {
+        $dd = Get-DataDir $eng
+        if (Test-Path (Join-Path $dd 'mysql')) {
+            $items += [pscustomobject]@{ Name = $eng.Name; Path = $dd; Kind = 'engine' }
+        }
+    }
+    if (Test-Path $Script:P.Data) {
+        foreach ($d in (Get-ChildItem $Script:P.Data -Directory -ErrorAction SilentlyContinue)) {
+            if ($d.Name -eq 'dumps') { continue }
+            if (-not (Test-Path (Join-Path $d.FullName 'mysql'))) { continue }
+            if ($items | Where-Object { $_.Path -eq $d.FullName }) { continue }
+            $items += [pscustomobject]@{ Name = $d.Name; Path = $d.FullName; Kind = 'data' }
+        }
+    }
+    if ($items.Count -eq 0) { throw 'ยังไม่มี datadir — เพิ่ม MySQL ก่อน: aptstack add mysql <zip>' }
+
+    Write-Host ''
+    Write-Host '  เลือก datadir ต้นทางที่จะ clone' -ForegroundColor Cyan
+    Write-Host ''
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        $preview = Get-NextAppName $items[$i].Name
+        Write-Host ("   {0}) {1,-36} -> {2}" -f ($i + 1), $items[$i].Name, $preview)
+        Write-Host ("       {0}" -f $items[$i].Path) -ForegroundColor DarkGray
+    }
+    Write-Host ''
+    $ans = Read-Host "  พิมพ์หมายเลข 1-$($items.Count) แล้ว Enter (Enter เปล่า = ยกเลิก)"
+    if ([string]::IsNullOrWhiteSpace($ans)) { Write-Info 'ยกเลิก'; return $null }
+    $n = 0
+    if (-not [int]::TryParse($ans, [ref]$n) -or $n -lt 1 -or $n -gt $items.Count) { throw "ไม่ถูกต้อง: '$ans'" }
+    return $items[$n - 1]
+}
+
 function Test-PhpApacheMod([string]$Dir) {
     # Thread Safe สำหรับ mod_php: มี php*apache2_4.dll
     # PHP 8 = php8apache2_4.dll · PHP 7 = php7apache2_4.dll · PHP 5 = php5apache2_4.dll
@@ -1634,6 +1747,259 @@ function Get-SourceMeta($destDir) {
     return $null
 }
 
+function Get-CloneLineage {
+    # สร้างข้อมูลสายสัมพันธ์ระหว่าง app version (clone / import / original)
+    $apps = @(Get-AppVersions)
+    $cur = Get-CurrentAppName
+    $rows = @()
+    foreach ($a in $apps) {
+        $src = Get-SourceMeta $a.Dir
+        $source = if ($src -and $src['source']) { $src['source'] } else { '' }
+        $installed = if ($src -and $src['installed']) { $src['installed'] } else { '' }
+        $parent = ''
+        $origin = ''
+        $kind = 'original'
+        if ($source -match '^clone of versions\\(.+)$') {
+            $parent = $Matches[1]
+            $kind = 'clone'
+            # ตาม chain ไปหาต้นตอ (origin)
+            $guard = 0
+            $walk = $parent
+            while ($walk -and $guard -lt 20) {
+                $guard++
+                $pd = Join-Path $Script:P.Versions $walk
+                if (-not (Test-Path $pd)) { break }
+                $ps = Get-SourceMeta $pd
+                if ($ps -and $ps['source'] -match '^clone of versions\\(.+)$') { $walk = $Matches[1]; continue }
+                $origin = if ($ps -and $ps['source']) { $ps['source'] } else { "versions\$walk" }
+                break
+            }
+            if (-not $origin) { $origin = "versions\$parent" }
+        }
+        elseif ($source) {
+            $origin = $source
+        }
+        else { $origin = "versions\$($a.Name)" }
+
+        $rows += [pscustomobject]@{
+            Name       = $a.Name
+            Family     = $a.Family
+            Version    = $a.Version
+            Dir        = $a.Dir
+            Parent     = $parent
+            Origin     = $origin
+            Kind       = $kind
+            Source     = $source
+            Installed  = $installed
+            Usable     = $a.Usable
+            IsCurrent  = ($a.Name -eq $cur)
+            SizeMB     = 0.0
+            Files      = 0
+        }
+    }
+    foreach ($r in $rows) {
+        $files = @(Get-ChildItem $r.Dir -Recurse -File -Force -ErrorAction SilentlyContinue)
+        $r.Files = $files.Count
+        $r.SizeMB = [math]::Round(($files | Measure-Object Length -Sum).Sum / 1MB, 1)
+    }
+    return $rows
+}
+
+function Cmd-CloneTree {
+    # aptstack clone-tree — ดูสายสัมพันธ์ clone ระหว่าง app version (console)
+    $rows = @(Get-CloneLineage)
+    if ($rows.Count -eq 0) { Write-Info 'ยังไม่มี app version'; return }
+
+    Write-Head 'clone tree — สายสัมพันธ์ระหว่าง app version'
+    $families = @($rows | Group-Object Family | Sort-Object Name)
+    foreach ($g in $families) {
+        $members = @($g.Group | Sort-Object { if ($_.Installed) { $_.Installed } else { '' } }, Name)
+        Write-Host ''
+        Write-Host "  [$($g.Name)]  ($($members.Count) version)" -ForegroundColor Cyan
+
+        $names = @($members | ForEach-Object { $_.Name })
+        # ห้ามใช้ชื่อ $roots/$root — PS ไม่สนตัวพิมพ์ ทับ $Root ของสคริปต์
+        $treeRoots = @($members | Where-Object { -not $_.Parent -or ($names -notcontains $_.Parent) })
+        if ($treeRoots.Count -eq 0) { $treeRoots = @($members[0]) }
+
+        $printed = @{}
+        $queue = New-Object System.Collections.Queue
+        for ($ri = 0; $ri -lt $treeRoots.Count; $ri++) {
+            $queue.Enqueue(@($treeRoots[$ri], '', ($ri -eq ($treeRoots.Count - 1))))
+        }
+        while ($queue.Count -gt 0) {
+            $item = $queue.Dequeue()
+            $row = $item[0]; $prefix = $item[1]; $isLast = [bool]$item[2]
+            if ($printed.ContainsKey($row.Name)) { continue }
+            $printed[$row.Name] = $true
+            $branch = if ($isLast) { '└─ ' } else { '├─ ' }
+            $tag = if ($row.IsCurrent) { '  <- ใช้อยู่' } else { '' }
+            $kindTag = if ($row.Kind -eq 'clone') { ' [clone]' } else { ' [origin]' }
+            $fg = if ($row.IsCurrent) { 'Green' } elseif ($row.Kind -eq 'clone') { 'Gray' } else { 'White' }
+            Write-Host ("{0}{1}{2}{3}  {4} MB  {5}{6}" -f $prefix, $branch, $row.Name, $kindTag, $row.SizeMB, $row.Installed, $tag) -ForegroundColor $fg
+            $cont = $prefix + $(if ($isLast) { '   ' } else { '│  ' })
+            if ($row.Kind -eq 'clone') {
+                Write-Host ("{0}← from {1}" -f $cont, $row.Parent) -ForegroundColor DarkGray
+            }
+            elseif ($row.Origin -and $row.Origin -notlike "versions\$($row.Name)") {
+                Write-Host ("{0}↑ origin: {1}" -f $cont, $row.Origin) -ForegroundColor DarkGray
+            }
+            $kids = @($members | Where-Object { $_.Parent -eq $row.Name } | Sort-Object Name)
+            for ($i = 0; $i -lt $kids.Count; $i++) {
+                $queue.Enqueue(@($kids[$i], $cont, ($i -eq ($kids.Count - 1))))
+            }
+        }
+        $orphans = @($members | Where-Object { -not $printed.ContainsKey($_.Name) })
+        foreach ($o in $orphans) {
+            Write-Host ("   [orphan] {0}  {1} MB  parent หาย" -f $o.Name, $o.SizeMB) -ForegroundColor Yellow
+            $printed[$o.Name] = $true
+        }
+    }
+
+    $nClone = @($rows | Where-Object { $_.Kind -eq 'clone' }).Count
+    Write-Host ''
+    Write-Info "รวม $($rows.Count) version · เป็น clone $nClone ตัว · ทุกตัวใช้ DB เดียวกัน (config\stack.json)"
+    Write-Info 'ดูเป็น HTML: aptstack report clone'
+    Write-Info 'สลับไปใช้  : aptstack use <ชื่อ>'
+}
+
+function Cmd-ReportClone([string]$outPath) {
+    # aptstack report clone [path] — HTML แสดงสายสัมพันธ์ clone / family
+    # หมายเหตุ: ห้ามใช้ตัวแปร $root/$roots — PS ไม่สนตัวพิมพ์ จะทับ $Root ของสคริปต์
+    $rows = @(Get-CloneLineage)
+    if ($rows.Count -eq 0) { throw 'ยังไม่มี app version' }
+    $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    $cfg = Get-Config
+    $cur = Get-CurrentAppName
+
+    $families = @($rows | Group-Object Family | Sort-Object Name)
+    $sb = New-Object Text.StringBuilder
+
+    foreach ($g in $families) {
+        $members = @($g.Group | Sort-Object { if ($_.Installed) { $_.Installed } else { '' } }, Name)
+        [void]$sb.AppendLine("<h2>Family: $([Net.WebUtility]::HtmlEncode($g.Name)) <span class=`"small`">($($members.Count) version)</span></h2>")
+
+        $names = @($members | ForEach-Object { $_.Name })
+        $treeRoots = @($members | Where-Object { -not $_.Parent -or ($names -notcontains $_.Parent) })
+        if ($treeRoots.Count -eq 0) { $treeRoots = @($members | Select-Object -First 1) }
+
+        function Build-TreeHtml($row, $memberSet, $allNames) {
+            $kids = @($memberSet | Where-Object { $_.Parent -eq $row.Name } | Sort-Object Name)
+            $badge = if ($row.Kind -eq 'clone') { '<span class="b-clone">clone</span>' } else { '<span class="b-origin">origin</span>' }
+            $curMark = if ($row.IsCurrent) { ' <span class="b-cur">ใช้อยู่</span>' } else { '' }
+            $from = if ($row.Kind -eq 'clone') { " <span class=`"small`">← from <code>$([Net.WebUtility]::HtmlEncode($row.Parent))</code></span>" } else { '' }
+            $orig = ''
+            if ($row.Kind -ne 'clone' -and $row.Origin -and $row.Origin -notlike "versions\$($row.Name)") {
+                $orig = " <span class=`"small`">↑ <code>$([Net.WebUtility]::HtmlEncode($row.Origin))</code></span>"
+            }
+            $li = "<li>$badge <b>$([Net.WebUtility]::HtmlEncode($row.Name))</b>$curMark$from$orig"
+            $li += " <span class=`"small`">· $($row.SizeMB) MB · $($row.Files) files · $($row.Installed)</span>"
+            if ($kids.Count -gt 0) {
+                $li += '<ul>'
+                foreach ($k in $kids) { $li += (Build-TreeHtml $k $memberSet $allNames) }
+                $li += '</ul>'
+            }
+            $li += '</li>'
+            return $li
+        }
+
+        [void]$sb.AppendLine('<ul class="tree">')
+        foreach ($treeRoot in $treeRoots) {
+            [void]$sb.AppendLine((Build-TreeHtml $treeRoot $members $names))
+        }
+        $printedNames = @{}
+        $walkStack = New-Object System.Collections.Stack
+        foreach ($treeRoot in $treeRoots) { $walkStack.Push($treeRoot) }
+        while ($walkStack.Count -gt 0) {
+            $row = $walkStack.Pop()
+            $printedNames[$row.Name] = $true
+            foreach ($k in @($members | Where-Object { $_.Parent -eq $row.Name })) { $walkStack.Push($k) }
+        }
+        foreach ($o in @($members | Where-Object { -not $printedNames.ContainsKey($_.Name) })) {
+            [void]$sb.AppendLine("<li><span class=`"b-warn`">orphan</span> <b>$([Net.WebUtility]::HtmlEncode($o.Name))</b> <span class=`"small`">parent หาย · $($o.SizeMB) MB</span></li>")
+        }
+        [void]$sb.AppendLine('</ul>')
+    }
+
+    $trs = @()
+    foreach ($r in ($rows | Sort-Object Family, Kind, Name)) {
+        $badge = if ($r.Kind -eq 'clone') { '<span class="b-clone">clone</span>' } else { '<span class="b-origin">origin</span>' }
+        $curMark = if ($r.IsCurrent) { ' ✓' } else { '' }
+        $trs += "<tr><td>$([Net.WebUtility]::HtmlEncode($r.Family))</td><td>$badge <b>$([Net.WebUtility]::HtmlEncode($r.Name))</b>$curMark</td><td>$([Net.WebUtility]::HtmlEncode($r.Parent))</td><td class=`"path`">$([Net.WebUtility]::HtmlEncode($r.Origin))</td><td class=`"num`">$($r.SizeMB)</td><td class=`"num`">$($r.Files)</td><td>$([Net.WebUtility]::HtmlEncode($r.Installed))</td></tr>"
+    }
+
+    $nClone = @($rows | Where-Object { $_.Kind -eq 'clone' }).Count
+    $nFam = $families.Count
+    $treeHtml = $sb.ToString()
+    $tableHtml = ($trs -join "`n")
+
+    $html = @"
+<!DOCTYPE html>
+<html lang="th"><head><meta charset="utf-8">
+<title>aptstack — clone tree ($stamp)</title>
+<style>
+  *{box-sizing:border-box}
+  body{font-family:"Leelawadee UI","Sarabun",Tahoma,sans-serif;color:#111;background:#fff;font-size:13px;line-height:1.55;margin:0;padding:18px 22px}
+  h1{font-size:21px;margin:0 0 2px}
+  h2{font-size:15px;margin:20px 0 6px;padding:4px 8px;background:#f0f2f5;border-left:5px solid #1b57c4;color:#10306b}
+  .sub{color:#444;font-size:12px;margin:0 0 10px}
+  table{border-collapse:collapse;width:100%;margin:4px 0 10px}
+  th,td{border:1px solid #8a8f98;padding:4px 7px;vertical-align:top;text-align:left;font-size:12.5px}
+  th{background:#eef1f5;font-weight:700}
+  .path{font-family:Consolas,monospace;font-size:11.5px;word-break:break-all}
+  .num{text-align:right}
+  .small{font-size:11.5px;color:#555}
+  .card{border:1px solid #8a8f98;padding:8px 10px;margin:8px 0;background:#fafbfc}
+  ul.tree,ul.tree ul{list-style:none;padding-left:1.1em;margin:4px 0}
+  ul.tree li{margin:3px 0;position:relative}
+  ul.tree ul li:before{content:"";position:absolute;left:-0.9em;top:0.55em;width:0.55em;border-top:1px solid #8a8f98}
+  .b-clone,.b-origin,.b-cur,.b-warn{display:inline-block;border-radius:4px;padding:1px 7px;font-weight:700;font-size:11px;border:1px solid #111}
+  .b-clone{border-color:#1b57c4;color:#1b57c4;background:#e8eefc}
+  .b-origin{border-color:#0a7a33;color:#0a7a33;background:#e7f6ec}
+  .b-cur{border-color:#8a6100;color:#8a6100;background:#fff6e5}
+  .b-warn{border-color:#b00020;color:#b00020;background:#fdecee}
+  code{font-family:Consolas,monospace;font-size:11.5px}
+  footer{margin-top:16px;padding-top:8px;border-top:1px solid #8a8f98;font-size:11.5px}
+  @media print{ body{padding:0;font-size:11.5px} }
+</style></head><body>
+
+<h1>aptstack — clone tree / สายสัมพันธ์ app version</h1>
+<p class="sub">สร้างเมื่อ $stamp · ปัจจุบันใช้: <b>$([Net.WebUtility]::HtmlEncode($cur))</b>
+· DB: 127.0.0.1:$($cfg.dbPort) (ทุก version ใช้ชุดเดียวกัน)</p>
+
+<div class="card">
+  สรุป: <b>$($rows.Count)</b> version · <b>$nFam</b> family · เป็น clone <b>$nClone</b> ตัว<br>
+  <span class="small">สีน้ำเงิน = clone · เขียว = origin (นำเข้าครั้งแรก) · เหลือง = กำลังใช้อยู่</span><br>
+  <span class="small">คำสั่ง: <code>aptstack clone-tree</code> (console) · <code>aptstack use &lt;ชื่อ&gt;</code> สลับเวอร์ชัน · clone ใหม่: <code>aptstack clone app</code></span>
+</div>
+
+<h2>แผนผัง (ตาม family)</h2>
+$treeHtml
+
+<h2>ตารางทั้งหมด</h2>
+<table>
+<tr><th>Family</th><th>Version</th><th>Parent (clone from)</th><th>Origin / Source</th><th>MB</th><th>Files</th><th>Installed</th></tr>
+$tableHtml
+</table>
+
+<footer>
+  aptstack · <code>aptstack report clone</code> · $stamp<br>
+  หมายเหตุ: clone ไม่สำเนา DB — แอปทุกตัวชี้ <code>config\stack.json</code> ชุดเดียวกัน
+</footer>
+</body></html>
+"@
+
+    if ([string]::IsNullOrWhiteSpace($outPath)) {
+        $outPath = Join-Path -Path $script:Root -ChildPath 'aptstack-clone-report.html'
+    }
+    Write-Utf8NoBom $outPath $html
+    Write-Head 'สร้างรายงาน clone tree (HTML)'
+    Write-Ok "ผล: $($rows.Count) version · $nClone clone · $nFam family"
+    Write-Info "ไฟล์: $outPath"
+    try { Start-Process $outPath | Out-Null; Write-Info 'เปิดในเบราว์เซอร์ให้แล้ว' } catch { }
+    return $outPath
+}
+
 function Normalize-PmaKind([string]$k) {
     $k = "$k".ToLower()
     if ($k -in @('pma', 'phpmyadmin', 'phpmyadmin')) { return 'pma' }
@@ -1712,15 +2078,15 @@ function Select-AddAppSource {
     if ($cwd) { $searchRoots += $cwd }
 
     $seenDir = @{}
-    foreach ($root in ($searchRoots | Select-Object -Unique)) {
-        $dirs = @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)
+    foreach ($searchDir in ($searchRoots | Select-Object -Unique)) {
+        $dirs = @(Get-ChildItem -LiteralPath $searchDir -Directory -ErrorAction SilentlyContinue)
         foreach ($d in $dirs) {
             if ($seenDir.ContainsKey($d.FullName)) { continue }
             $seenDir[$d.FullName] = $true
             $n = $d.Name
             if ($n -match '^\.' -or $n -match '^aptstack' -or $n -match '^stack$' -or $n -match '^config$' -or $n -match '^versions$' -or $n -match '^www$' -or $n -match '^data$' -or $n -match '^logs$' -or $n -match '^templates$' -or $n -match '^downloads$' -or $n -match '^out$' -or $n -match '^dist$' -or $n -match '^_mariadb' -or $n -match '^_setup_') { continue }
             # โฟลเดอร์แอป = มี index.php / app\index.php / ไฟล์ .php อยู่ในนั้น หรืออยู่ใน examples\
-            $inExamples = ($root -eq $ex)
+            $inExamples = ($searchDir -eq $ex)
             $looksApp = $inExamples -or
                 (Test-Path (Join-Path $d.FullName 'index.php')) -or
                 (Test-Path (Join-Path $d.FullName 'app\index.php')) -or
@@ -3089,6 +3455,130 @@ function Invoke-MysqlSql($cfg, [string]$client, [string]$SqlText, [string]$DbNam
     return [pscustomobject]@{ ExitCode = [int]$p.ExitCode; Out = $out; Err = $err }
 }
 
+function Invoke-MysqlImportFile($cfg, [string]$client, [string]$SqlPath, [string]$DbName, [string]$Act) {
+    # import .sql -> mysql ผ่าน stdin แบบ stream:
+    #  - ไม่โหลด dump ทั้งไฟล์ลง memory (ก่อนหน้า ReadAllBytes ~90MB ทำให้ดูค้าง/กินแรม)
+    #  - แก้ USE / CREATE DATABASE ทีละบรรทัดระหว่าง stream
+    #  - แสดง % ตาม byte ที่ feed เข้า client (mysql ดึงช้า = ค้างที่ % เดิม = กำลังทำงานจริง)
+    #  - ENCODING: อ่าน/เขียนด้วย Latin-1 (byte-preserving) + client --default-character-set=binary
+    #    กัน varbinary (pass_encoded/uname) ถูกแทนด้วย U+FFFD ตอนตีความเป็น UTF-8
+    if (-not $Act) { $Act = "import SQL -> $DbName" }
+    $totalMB = [math]::Round((Get-Item -LiteralPath $SqlPath).Length / 1MB, 1)
+
+    $argList = @('--skip-ssl', '-h', '127.0.0.1', '-P', "$($cfg.dbPort)", '--protocol=tcp',
+                 '--default-character-set=binary', '-u', $cfg.dbUser, "-p$($cfg.dbPass)")
+    if ($DbName) { $argList += $DbName }
+    $argList += '--force'
+    $argStr = ($argList | ForEach-Object {
+        $a = "$_"
+        if ($a -match '[\s"]') { '"' + ($a -replace '"', '\"') + '"' } else { $a }
+    }) -join ' '
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $client
+    $psi.Arguments = $argStr
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+
+    $proc = New-Object System.Diagnostics.Process
+    $proc.StartInfo = $psi
+    [void]$proc.Start()
+    # อ่าน out/err คู่ขนานกัน stdin — กัน deadlock ที่ buffer เต็ม
+    $outTask = $proc.StandardOutput.ReadToEndAsync()
+    $errTask = $proc.StandardError.ReadToEndAsync()
+
+    # Latin-1 = 1 byte ↔ 1 char — round-trip binary ได้ปลอดภัย (UTF-8 StreamReader จะแทน invalid ด้วย U+FFFD)
+    $enc = [Text.Encoding]::GetEncoding(28591)
+    $stdinW = $null; $sr = $null; $fs = $null; $sw = $null
+    $exitCode = -1
+    try {
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $fs = [IO.File]::OpenRead($SqlPath)
+        $sr = New-Object System.IO.StreamReader($fs, $enc, $false)
+        $stdinW = New-Object System.IO.StreamWriter($proc.StandardInput.BaseStream, $enc, 65536)
+        $stdinW.NewLine = "`n"
+
+        $total = [double]$fs.Length
+        $done = 0.0
+        $pct = -1
+        $lastLog = -2.0
+        $useRe = [regex]'(?i)^\s*USE\s+`?([A-Za-z0-9_]+)`?\s*;'
+        $createRe = [regex]'(?i)^\s*CREATE\s+DATABASE\s+(IF\s+NOT\s+EXISTS\s+)?`?([A-Za-z0-9_]+)`?'
+        $sysDb = @('mysql', 'information_schema', 'performance_schema', 'sys')
+
+        while ($null -ne ($line = $sr.ReadLine())) {
+            $mu = $useRe.Match($line)
+            if ($mu.Success) {
+                $n = $mu.Groups[1].Value
+                if ($n -and $n -ne $DbName -and ($sysDb -notcontains $n)) {
+                    $line = 'USE `' + $DbName + '`;'
+                }
+            } elseif ($createRe.IsMatch($line)) {
+                $line = $createRe.Replace($line, {
+                    param($m) 'CREATE DATABASE ' + $m.Groups[1].Value + '`' + $DbName + '`'
+                })
+            }
+            try { $stdinW.WriteLine($line) }
+            catch { break }  # mysql ปิด stdin ก่อนจบ (error กลางทาง) — ออกไปอ่าน output
+
+            $done = $fs.Position
+            if ($total -gt 0) {
+                $p = [int][Math]::Min(100, [Math]::Round($done / $total * 100))
+                $eta = ''
+                if ($sw.Elapsed.TotalSeconds -gt 2 -and $done -gt 1MB) {
+                    $rate = $done / $sw.Elapsed.TotalSeconds
+                    if ($rate -gt 1) {
+                        $sec = ($total - $done) / $rate
+                        if ($sec -gt 0 -and $sec -lt 86400) { $eta = "เหลือ ~$([int]$sec) วิ" }
+                    }
+                }
+                if ($p -ne $pct) {
+                    $pct = $p
+                    Write-Progress -Activity $Act -PercentComplete $pct `
+                        -Status "$pct% · $([math]::Round($done/1MB,1))/$totalMB MB $eta"
+                }
+                if ($sw.Elapsed.TotalSeconds - $lastLog -ge 5) {
+                    $lastLog = $sw.Elapsed.TotalSeconds
+                    Write-Info ("    ... {0}% · {1:N1}/{2:N1} MB · {3}" -f $pct, ($done / 1MB), $totalMB, $eta)
+                }
+            }
+        }
+        try { $stdinW.Flush() } catch { }
+        try { $stdinW.Dispose() } catch { }
+        $stdinW = $null
+
+        # feed ครบแล้ว — เหลือขั้น mysql ย่อย/ commit (กับ DB ใหญ่อาจนานอีกพัก)
+        Write-Progress -Activity $Act -PercentComplete 100 -Status 'feed ครบ — รอ mysql ประมวลผลสุดท้าย...'
+        Write-Info '    feed ครบ 100% — รอ mysql ประมวลผลท้ายสุด (ตารางใหญ่อาจใช้เวลา)...'
+        if (-not $proc.WaitForExit(600000)) {
+            try { $proc.Kill() } catch { }
+            throw 'import ใช้เวลานานเกิน 10 นาที — หยุด process แล้ว'
+        }
+        $exitCode = $proc.ExitCode
+    }
+    finally {
+        if ($stdinW) { try { $stdinW.Dispose() } catch { } }
+        if ($sr) { try { $sr.Dispose() } catch { } }
+        if ($fs) { try { $fs.Dispose() } catch { } }
+        Write-Progress -Activity $Act -Completed
+        if ($sw) { $sw.Stop() }
+    }
+
+    $outText = ''; $errText = ''
+    try { $outText = $outTask.Result } catch { }
+    try { $errText = $errTask.Result } catch { }
+    $proc.Dispose()
+
+    return [pscustomobject]@{
+        ExitCode = [int]$exitCode
+        Out      = @($outText -split "`r?`n")
+        Err      = @($errText -split "`r?`n")
+    }
+}
+
 # ---------------------------------------------------------------- import ทั้ง install เก่า
 function Copy-StateTree([string]$src, [string]$dst, [string]$label, [int]$idx, [int]$total, [string[]]$xargs = @()) {
     # robocopy stream % -> Write-Progress (แสดงสถานะทีละขั้นระหว่างย้าย)
@@ -3499,31 +3989,9 @@ function Cmd-Import([string]$file, [string]$dbName, [string]$extra) {
         Write-Info "แตกแล้ว: $($sqlFile.Name)"
     }
 
-    # 3) import — ถ้า dump มี CREATE DATABASE/USE ชื่ออื่น ให้บังคับชื่อปลายทาง
-    #    (seed.sql ของตัวอย่างมี USE aptstack_demo — ถ้าไม่ rewrite จะลงผิด db)
-    $bytes = [IO.File]::ReadAllBytes($sqlPath)
-    $text = [Text.Encoding]::UTF8.GetString($bytes)
-    if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
-
-    # NOTE: single-quoted regex — backtick ไม่ถูก escape ใน PS single quote (ใช้ได้กับ `id` ของ MySQL)
-    $useHits = [regex]::Matches($text, '(?im)^\s*USE\s+`?([A-Za-z0-9_]+)`?\s*;')
-    $otherDb = @()
-    foreach ($m in $useHits) {
-        $n = $m.Groups[1].Value
-        if ($n -and ($n -ne $dbName) -and ($n -notin @('mysql', 'information_schema', 'performance_schema', 'sys'))) { $otherDb += $n }
-    }
-    $otherDb = @($otherDb | Select-Object -Unique)
-    if ($otherDb.Count -gt 0) {
-        Write-Warn2 ("ไฟล์มี USE อื่น: " + ($otherDb -join ', ') + ' — บังคับเป็น USE ชื่อปลายทางทุกจุด')
-        foreach ($n in $otherDb) {
-            $text = [regex]::Replace($text, ('(?im)(^\s*USE\s+`?' + [regex]::Escape($n) + '`?\s*;)'), ('USE `' + $dbName + '`;'))
-        }
-    }
-    # บังคับ CREATE DATABASE ให้ชี้ dbName (คง IF NOT EXISTS)
-    $text = [regex]::Replace($text, '(?im)^\s*CREATE\s+DATABASE\s+(IF\s+NOT\s+EXISTS\s+)?`?([A-Za-z0-9_]+)`?',
-        { param($m) 'CREATE DATABASE ' + $m.Groups[1].Value + '`' + $dbName + '`' })
-
-    $r1 = Invoke-MysqlSql $cfg $client $text $dbName
+    # 3) import — stream ทีละบรรทัดพร้อม % progress (ไม่โหลด dump ทั้งไฟล์ลง memory)
+    #    แก้ USE / CREATE DATABASE ระหว่าง stream ให้ชี้ dbName ปลายทาง
+    $r1 = Invoke-MysqlImportFile $cfg $client $sqlPath $dbName ("import SQL -> $dbName")
     if ($tmpExtract -and (Test-Path $tmpExtract)) { Remove-Item $tmpExtract -Recurse -Force -ErrorAction SilentlyContinue }
 
     if ($r1.ExitCode -ne 0) {
@@ -3850,8 +4318,13 @@ function Cmd-Report([string]$a, [string]$b) {
     # aptstack report <path>    -> HTML ไป path ที่ระบุ
     # aptstack report db        -> ตาราง inventory database
     # aptstack report db <name> -> ตารางใน db นั้น
+    # aptstack report clone     -> HTML สายสัมพันธ์ clone/family ระหว่าง app version
     if ("$a".ToLower() -eq 'db') {
         Cmd-ReportDb $b
+        return
+    }
+    if ("$a".ToLower() -eq 'clone') {
+        Cmd-ReportClone $b
         return
     }
     $OutPath = $a
@@ -4660,59 +5133,84 @@ function Get-FolderSizeMB($p) {
 }
 
 function Cmd-Clone($what, $from, $to) {
-    if (-not $what -or -not $from -or -not $to) { throw 'ใช้: aptstack clone <app|mysql> <จาก> <เป็น>' }
-    Guard-Name $from 'ชื่อต้นทาง'
-    Guard-Name $to 'ชื่อปลายทาง'
-
-    switch ($what.ToLower()) {
-        'app' {
-            $src = Join-Path $Script:P.Versions $from
-            $dst = Join-Path $Script:P.Versions $to
-            if (-not (Test-Path $src)) { throw "ไม่พบ versions\$from" }
-            if (Test-Path $dst) { throw "มี versions\$to อยู่แล้ว — เปลี่ยนชื่อปลายทาง" }
-            $cfg = Get-Config
-            $cur = Get-CurrentAppName
-            Write-Head "clone app   $from -> $to"
-            $mb = Get-FolderSizeMB $src
-            if (-not (Confirm-Action "คัดลอกโค้ด $mb MB จาก versions\$from ไป versions\$to ?")) { Write-Info 'ยกเลิก'; return }
-            robocopy $src $dst /E /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
-            if ($LASTEXITCODE -ge 8) { throw "copy ล้มเหลว (robocopy exit $LASTEXITCODE)" }
-            # clone -> สืบทอด family จากต้นทาง แล้วตั้ง version = ชื่อปลายทาง
-            Set-AppMeta $dst (Get-AppMeta $src).Family $to
-            Set-SourceMeta $dst 'app' "clone of versions\$from"
-            Write-Ok "คัดลอกแล้ว: versions\$to ($mb MB)"
-            Write-Info "ยังอยู่เวอร์ชันเดิม: $cur (ระบบไม่สลับให้อัตโนมัติ)"
-            Write-Info "สลับเมื่อพร้อม: aptstack use $to      ย้อนกลับ: aptstack use -"
-            Write-Info 'DATABASE: ใช้ตัวเดิม — ค่าต่อ DB อยู่กลางที่ config\stack.json'
-            Write-Info '            (host/port/user/pass ไม่ผูกกับ app) → แอปใหม่เห็นข้อมูลชุดเดิม'
-        }
-        'mysql' {
-            # clone datadir -> ต้อง stop ก่อน (ห้าม copy ไฟล์ InnoDB ขณะ server เปิด)
-            $cfg = Get-Config
-            if ((Test-Running 'mysql') -or -not (Test-PortFree $cfg.dbPort)) {
-                throw 'ยังรันอยู่ — stop ก่อน clone datadir (ไฟล์ InnoDB ห้าม copy ตอนเปิด):  aptstack stop'
-            }
-            $srcD = $null
-            $eng = Resolve-MySql $from
-            if ($eng) { $srcD = Get-DataDir $eng } else { $srcD = Join-Path $Script:P.Data $from }
-            if (-not (Test-Path (Join-Path $srcD 'mysql'))) { throw "ไม่พบ datadir ที่มีข้อมูล: $srcD" }
-            $dstD = Join-Path $Script:P.Data $to
-            if (Test-Path $dstD) { throw "มี data\$to อยู่แล้ว" }
-            $mb = Get-FolderSizeMB $srcD
-            Write-Head "clone database  $from -> $to"
-            Write-Warn2 "จะคัดลอก datadir $mb MB (ต้อง stop แล้ว)"
-            Write-Info "ต้นทาง : $srcD"
-            Write-Info "ปลายทาง: $dstD"
-            if (-not (Confirm-Action 'คัดลอก datadir ใช่ไหม?')) { Write-Info 'ยกเลิก'; return }
-            robocopy $srcD $dstD /E /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
-            if ($LASTEXITCODE -ge 8) { throw "copy ล้มเหลว ($LASTEXITCODE)" }
-            Write-Ok "คัดลอก datadir แล้ว -> data\$to"
-            Write-Info 'ใช้กับ engine ใหม่: aptstack add mysql <zip ใหม่> แล้ว aptstack use mysql <ชื่อ engine ใหม่>'
-            Write-Warn2 'ห้ามรัน 2 engine พร้อมกันกับ datadir เดียวกัน — ของ clone นี้แยกกันแล้วจึงปลอดภัย'
-            Write-Info 'กลับไปของเดิม: aptstack use mysql <ชื่อเดิม> แล้ว start'
-        }
-        default { throw "ไม่รู้จัก '$what' — ใช้ได้: app | mysql" }
+    # ไม่ใส่อะไร -> ถามก่อนว่า clone app หรือ clone mysql
+    if (-not $what) {
+        $what = Select-CloneKind
+        if (-not $what) { return }
     }
+    $kind = "$what".ToLower()
+
+    if ($kind -eq 'app') {
+        # ไม่ใส่ from -> เมนูเลือกต้นทาง ; ไม่ใส่ to -> ชื่อเวอร์ชันถัดไปอัตโนมัติ
+        if (-not $from) {
+            $pick = Select-CloneAppSource
+            if (-not $pick) { return }
+            $from = $pick.Name
+        }
+        Guard-Name $from 'ชื่อต้นทาง'
+        if (-not $to) { $to = Get-NextAppName $from }
+        Guard-Name $to 'ชื่อปลายทาง'
+        if ($from -eq $to) { throw "ปลายทางซ้ำกับต้นทาง: $from" }
+
+        $src = Join-Path $Script:P.Versions $from
+        $dst = Join-Path $Script:P.Versions $to
+        if (-not (Test-Path $src)) { throw "ไม่พบ versions\$from" }
+        if (Test-Path $dst) { throw "มี versions\$to อยู่แล้ว — เปลี่ยนชื่อปลายทาง" }
+        $cur = Get-CurrentAppName
+        Write-Head "clone app   $from -> $to"
+        $mb = Get-FolderSizeMB $src
+        if (-not (Confirm-Action "คัดลอกโค้ด $mb MB จาก versions\$from ไป versions\$to ?")) { Write-Info 'ยกเลิก'; return }
+        robocopy $src $dst /E /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw "copy ล้มเหลว (robocopy exit $LASTEXITCODE)" }
+        # clone -> สืบทอด family จากต้นทาง แล้วตั้ง version = ชื่อปลายทาง
+        Set-AppMeta $dst (Get-AppMeta $src).Family $to
+        Set-SourceMeta $dst 'app' "clone of versions\$from"
+        Write-Ok "คัดลอกแล้ว: versions\$to ($mb MB)"
+        Write-Info "ยังอยู่เวอร์ชันเดิม: $cur (ระบบไม่สลับให้อัตโนมัติ)"
+        Write-Info "สลับเมื่อพร้อม: aptstack use $to      ย้อนกลับ: aptstack use -"
+        Write-Info 'DATABASE: ใช้ตัวเดิม — ค่าต่อ DB อยู่กลางที่ config\stack.json'
+        Write-Info '            (host/port/user/pass ไม่ผูกกับ app) → แอปใหม่เห็นข้อมูลชุดเดิม'
+        return
+    }
+
+    if ($kind -ne 'mysql') {
+        throw "ไม่รู้จัก '$what' — ใช้ได้: app | mysql"
+    }
+
+    # mysql: ไม่ใส่ from -> เมนู datadir ; ไม่ใส่ to -> ชื่อถัดไป
+    if (-not $from) {
+        $pick = Select-CloneMysqlSource
+        if (-not $pick) { return }
+        $from = $pick.Name
+    }
+    Guard-Name $from 'ชื่อต้นทาง'
+    if (-not $to) { $to = Get-NextAppName $from }
+    Guard-Name $to 'ชื่อปลายทาง'
+    if ($from -eq $to) { throw "ปลายทางซ้ำกับต้นทาง: $from" }
+
+    # clone datadir -> ต้อง stop ก่อน (ห้าม copy ไฟล์ InnoDB ขณะ server เปิด)
+    $cfg = Get-Config
+    if ((Test-Running 'mysql') -or -not (Test-PortFree $cfg.dbPort)) {
+        throw 'ยังรันอยู่ — stop ก่อน clone datadir (ไฟล์ InnoDB ห้าม copy ตอนเปิด):  aptstack stop'
+    }
+    $srcD = $null
+    $eng = Resolve-MySql $from
+    if ($eng) { $srcD = Get-DataDir $eng } else { $srcD = Join-Path $Script:P.Data $from }
+    if (-not (Test-Path (Join-Path $srcD 'mysql'))) { throw "ไม่พบ datadir ที่มีข้อมูล: $srcD" }
+    $dstD = Join-Path $Script:P.Data $to
+    if (Test-Path $dstD) { throw "มี data\$to อยู่แล้ว" }
+    $mb = Get-FolderSizeMB $srcD
+    Write-Head "clone database  $from -> $to"
+    Write-Warn2 "จะคัดลอก datadir $mb MB (ต้อง stop แล้ว)"
+    Write-Info "ต้นทาง : $srcD"
+    Write-Info "ปลายทาง: $dstD"
+    if (-not (Confirm-Action 'คัดลอก datadir ใช่ไหม?')) { Write-Info 'ยกเลิก'; return }
+    robocopy $srcD $dstD /E /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "copy ล้มเหลว ($LASTEXITCODE)" }
+    Write-Ok "คัดลอก datadir แล้ว -> data\$to"
+    Write-Info 'ใช้กับ engine ใหม่: aptstack add mysql <zip ใหม่> แล้ว aptstack use mysql <ชื่อ engine ใหม่>'
+    Write-Warn2 'ห้ามรัน 2 engine พร้อมกันกับ datadir เดียวกัน — ของ clone นี้แยกกันแล้วจึงปลอดภัย'
+    Write-Info 'กลับไปของเดิม: aptstack use mysql <ชื่อเดิม> แล้ว start'
 }
 
 function Cmd-Remove($what, $name, $extra) {
@@ -5002,24 +5500,25 @@ function Cmd-Pull($kind, $target, $extra) {
     $tgtVer = if ($tgt.Version) { $tgt.Version } else { $tgt.Name }
 
     # ---- 1) เก็บรายชื่อ root ทั้งหมด (root นี้ + siblings + path ที่ระบุ) ----
-    $roots = New-Object System.Collections.ArrayList
-    [void]$roots.Add($Root)
+    # ห้ามใช้ชื่อ $roots — ทับ $Root (PS ไม่สนตัวพิมพ์)
+    $rootList = New-Object System.Collections.ArrayList
+    [void]$rootList.Add($Root)
     $parent = Split-Path $Root -Parent
     foreach ($d in @(Get-ChildItem $parent -Directory -EA SilentlyContinue)) {
         if ($d.FullName.TrimEnd('\') -ieq $Root.TrimEnd('\')) { continue }
-        if ((Test-Path (Join-Path $d.FullName 'aptstack.ps1')) -and (Test-Path (Join-Path $d.FullName 'config\stack.json'))) { [void]$roots.Add($d.FullName) }
+        if ((Test-Path (Join-Path $d.FullName 'aptstack.ps1')) -and (Test-Path (Join-Path $d.FullName 'config\stack.json'))) { [void]$rootList.Add($d.FullName) }
     }
     if ($extra) {
         $ex = "$extra"; if ($ex -notmatch '^[A-Za-z]:[\\/]') { $ex = Join-Path $Root $ex }
         if (Test-Path (Join-Path $ex 'aptstack.ps1')) {
             $exFull = (Resolve-Path $ex).Path
-            if (@($roots) -notcontains $exFull) { [void]$roots.Add($exFull) }
+            if (@($rootList) -notcontains $exFull) { [void]$rootList.Add($exFull) }
         } else { Write-Warn2 "ไม่พบ aptstack root ที่: $ex" }
     }
 
     # ---- 2) สำรวจแต่ละ root: config, server รันอยู่ไหม, dumps, engines ----
     $rootInfo = @(); $dumpFiles = @()
-    foreach ($r in @($roots)) {
+    foreach ($r in @($rootList)) {
         $c = $null
         try { $c = (Get-Content (Join-Path $r 'config\stack.json') -Raw -EA Stop | ConvertFrom-Json) } catch { }
         $port = if ($c -and $c.dbPort) { [int]$c.dbPort } else { 3306 }
@@ -5370,24 +5869,51 @@ function Get-AppOriginInfo($app) {
     $raw = if ($sm) { "$($sm['source'])" } else { '' }
     $kind = if ($sm -and $sm['kind']) { $sm['kind'] } else { 'app' }
     $installed = if ($sm -and $sm['installed']) { $sm['installed'] } else { '' }
-    $abs = Resolve-OriginPath $raw
-    $exists = if ($abs) { [bool](Test-Path -LiteralPath $abs) } else { $false }
+    $abs = $null
+    $exists = $false
     $type = 'none'
-    if ($exists) {
-        $type = if (Test-Path -LiteralPath $abs -PathType Container) { 'dir' }
-                elseif ($abs -match '\.zip$') { 'zip' }
-                else { 'file' }
+    $diffNote = ''
+    $cloneParent = ''
+
+    if ($raw -match '^clone of versions\\(.+)$') {
+        # clone: ต้นทางไม่ใช่ zip/path ภายนอก — ใช้ parent version เป็น base ของ diff
+        $cloneParent = $Matches[1]
+        $kind = 'clone'
+        $parentDir = Join-Path $Script:P.Versions $cloneParent
+        if (Test-Path -LiteralPath $parentDir) {
+            $abs = $parentDir
+            $exists = $true
+            $type = 'dir'
+            $diffNote = "เทียบกับ parent: versions\$cloneParent"
+        }
+        else {
+            $abs = $parentDir
+            $exists = $false
+            $diffNote = "parent หาย: versions\$cloneParent"
+        }
     }
+    else {
+        $abs = Resolve-OriginPath $raw
+        $exists = if ($abs) { [bool](Test-Path -LiteralPath $abs) } else { $false }
+        if ($exists) {
+            $type = if (Test-Path -LiteralPath $abs -PathType Container) { 'dir' }
+                    elseif ($abs -match '\.zip$') { 'zip' }
+                    else { 'file' }
+        }
+    }
+
     return [pscustomobject]@{
-        App         = $app.Name
-        Dir         = $app.Dir
-        Family      = $app.Family
-        Kind        = $kind
-        SourceRaw   = $raw
-        SourceAbs   = $abs
+        App          = $app.Name
+        Dir          = $app.Dir
+        Family       = $app.Family
+        Kind         = $kind
+        SourceRaw    = $raw
+        SourceAbs    = $abs
         SourceExists = $exists
-        SourceType  = $type
-        Installed   = $installed
+        SourceType   = $type
+        Installed    = $installed
+        CloneParent  = $cloneParent
+        DiffNote     = $diffNote
     }
 }
 
@@ -5424,7 +5950,11 @@ function Select-DiffApp {
         $ok = if ($oi.SourceExists) { 'OK' } else { 'MISS' }
         $okCol = if ($oi.SourceExists) { 'Green' } else { 'Yellow' }
         Write-Host ("  [{0,2}]{1} {2}" -f ($i + 1), $mark, $a.Name) -ForegroundColor White
-        Write-Host ("       origin: {0}  [{1}]" -f $oi.SourceRaw, $ok) -ForegroundColor $okCol
+        $originLabel = if ($oi.Kind -eq 'clone' -or $oi.CloneParent) { "clone -> versions\$($oi.CloneParent)" } else { $oi.SourceRaw }
+        Write-Host ("       origin: {0}  [{1}]" -f $originLabel, $ok) -ForegroundColor $okCol
+        if ($oi.DiffNote) {
+            Write-Host ("       note  : {0}" -f $oi.DiffNote) -ForegroundColor DarkGray
+        }
         if ($oi.SourceAbs -and $oi.SourceExists) {
             Write-Host ("       path  : {0}" -f $oi.SourceAbs) -ForegroundColor DarkGray
         }
@@ -5505,7 +6035,11 @@ function Cmd-Diff($appVer, $outName, $extra) {
     Write-Host "  versions : $($app.Dir)" -ForegroundColor White
     Write-Host "  kind     : $($oi.Kind)" -ForegroundColor Gray
     Write-Host "  installed: $(if ($oi.Installed) { $oi.Installed } else { '?' })" -ForegroundColor Gray
-    Write-Host "  source   : $(if ($oi.SourceRaw) { $oi.SourceRaw } else { '(ไม่มี .aptstack-source)' })" -ForegroundColor $(if ($oi.SourceRaw) { 'Cyan' } else { 'Yellow' })
+    $srcShow = if ($oi.Kind -eq 'clone' -or $oi.CloneParent) { "clone of versions\$($oi.CloneParent)" } else { $oi.SourceRaw }
+    Write-Host "  source   : $(if ($srcShow) { $srcShow } else { '(ไม่มี .aptstack-source)' })" -ForegroundColor $(if ($srcShow) { 'Cyan' } else { 'Yellow' })
+    if ($oi.DiffNote) {
+        Write-Host "  note     : $($oi.DiffNote)" -ForegroundColor DarkGray
+    }
     if ($oi.SourceAbs) {
         $st = if ($oi.SourceExists) { "พบ ($($oi.SourceType))" } else { 'ไม่พบ' }
         Write-Host "  resolved : $($oi.SourceAbs)" -ForegroundColor $(if ($oi.SourceExists) { 'Green' } else { 'Yellow' })
@@ -5516,8 +6050,14 @@ function Cmd-Diff($appVer, $outName, $extra) {
     Write-Host ''
 
     if (-not $oi.SourceExists) {
-        Write-Warn2 'ไม่พบไฟล์/โฟลเดอร์ต้นทาง — diff ใช้ Base ไม่ได้'
-        Write-Info 'ตรวจสอบ .aptstack-source ของ app นี้ หรือส่ง path เอง:'
+        if ($oi.Kind -eq 'clone' -or $oi.CloneParent) {
+            Write-Warn2 "parent ของ clone ไม่อยู่แล้ว: versions\$($oi.CloneParent)"
+            Write-Info 'เทียบกับต้นตอ (origin เดิม) หรือพิมพ์ path เอง:'
+        }
+        else {
+            Write-Warn2 'ไม่พบไฟล์/โฟลเดอร์ต้นทาง — diff ใช้ Base ไม่ได้'
+            Write-Info 'ตรวจสอบ .aptstack-source ของ app นี้ หรือส่ง path เอง:'
+        }
         Write-Info '  powershell -File tools\make-deploy-diff.ps1 -Base <zip|dir> -Compare "versions\' + $app.Name + '"'
         # ยังให้ลองพิมพ์ path เองได้
         Write-Host ''
@@ -5534,7 +6074,12 @@ function Cmd-Diff($appVer, $outName, $extra) {
             App = $app.Name; Dir = $app.Dir; Family = $app.Family
             Kind = $oi.Kind; SourceRaw = $manual; SourceAbs = $manualAbs
             SourceExists = $true; SourceType = 'manual'; Installed = $oi.Installed
+            CloneParent = $oi.CloneParent; DiffNote = 'manual base'
         }
+    }
+    elseif ($oi.Kind -eq 'clone') {
+        Write-Info "clone: ใช้ parent เป็น Base — เฉพาะไฟล์ที่แก้หลัง clone เท่านั้น"
+        Write-Info "ถ้าต้องการเทียบกับต้นตอ import เดิม ใช้: aptstack diff lands_auth"
     }
 
     $base = $oi.SourceAbs
@@ -5585,7 +6130,11 @@ function Cmd-ImportOrigin {
         Write-Host ("  {0} {1}" -f $mark, $oi.App) -ForegroundColor White
         Write-Host ("      kind      : {0}" -f $oi.Kind) -ForegroundColor DarkGray
         Write-Host ("      installed : {0}" -f $(if ($oi.Installed) { $oi.Installed } else { '?' })) -ForegroundColor DarkGray
-        Write-Host ("      source    : {0}  [{1}]" -f $(if ($oi.SourceRaw) { $oi.SourceRaw } else { '(none)' }), $ok) -ForegroundColor $okCol
+        $srcShow = if ($oi.Kind -eq 'clone' -or $oi.CloneParent) { "clone of versions\$($oi.CloneParent)" } else { $oi.SourceRaw }
+        Write-Host ("      source    : {0}  [{1}]" -f $(if ($srcShow) { $srcShow } else { '(none)' }), $ok) -ForegroundColor $okCol
+        if ($oi.DiffNote) {
+            Write-Host ("      note      : {0}" -f $oi.DiffNote) -ForegroundColor DarkGray
+        }
         if ($oi.SourceAbs) {
             Write-Host ("      absolute  : {0}" -f $oi.SourceAbs) -ForegroundColor DarkGray
         }
@@ -6327,8 +6876,14 @@ function Cmd-Help {
   aptstack tls off                  ปิด HTTPS
 
   ── จัดการ version / ข้อมูล (มียืนยันก่อนลบ) ──────
-  aptstack clone app <จาก> <เป็น>  ก้อปปี้โค้ด app 1.0 -> 1.1 (ยังไม่สลับให้ -> use เอง)
-  aptstack clone mysql <จาก> <เป็น> คัดลอก datadir (ต้อง stop ก่อน · ใช้กับ engine ใหม่)
+  aptstack clone                   ถามก่อน: app หรือ mysql แล้วเข้าเมนู
+  aptstack clone app               เมนูเลือก app + ชื่อเวอร์ชันถัดให้เอง (1.0->1.1)
+                                   คัดลอกโค้ด · DB เดิม · ยังไม่สลับ -> use เอง
+  aptstack clone app <จาก> [เป็น]  ไม่ใส่ [เป็น] = คำนวณชื่อเวอร์ชันถัดให้
+  aptstack clone mysql             เมนูเลือก datadir + ชื่อถัดให้ (ต้อง stop ก่อน)
+  aptstack clone mysql <จาก> [เป็น] คัดลอก datadir (ไม่ใส่ [เป็น] = ชื่อถัดให้)
+  aptstack clone-tree              ดูสายสัมพันธ์ clone ระหว่าง app version (console)
+  aptstack report clone [path]     HTML แผนผัง clone/family + ตาราง size/source
   aptstack remove app <ชื่อ>       ลบโค้ด app (ถามยืนยัน · ตัวที่ใช้อยู่ลบไม่ได้)
   aptstack remove php|apache|mysql <ชื่อ> [data]  ลบ binary (data เก็บไว้ เว้นแต่ใส่ data แล้วยืนยัน DELETE)
   aptstack migrate mysql <ใหม่>    โยกข้อมูล DB ไป engine ใหม่ (dump -> switch -> restore)
@@ -6337,6 +6892,8 @@ function Cmd-Help {
                                    -> มี % + ETA ระหว่าง dump/import
   aptstack report [path]           สร้างหน้า HTML สรุปสถานะทั้งหมด (เปิดให้ + พิมพ์ได้)
   aptstack report db [name]        inventory database (ก้อน/ตาราง/ขนาด/ดิสก์รวม)
+  aptstack report clone [path]     รายงานสายสัมพันธ์ clone ระหว่าง app version
+  aptstack clone-tree              ดู clone lineage สั้น ๆ ใน console
   aptstack record start [name]     บันทึกคำสั่งเป็น scripts\*.ps1 (รันซ้ำได้)
   aptstack record stop | status
   aptstack play <file.ps1>         รัน script ที่ record ไว้
@@ -6437,6 +6994,8 @@ if ($HelpFlag) { $Command = 'help' }
 # -v / -Version -> โชว์เวอร์ชัน (ค่าเริ่มต้น Command = help ถ้าไม่ใส่อะไร)
 if ($VersionFlag) { $Command = 'version' }
 
+# จับ throw ทั้งหมด -> โชว์เป็น [ERR] สีแดง (ไม่ให้ PowerShell ทิ้ง RuntimeException ยาว ๆ)
+try {
 switch ($Command.ToLower()) {
     'init'        { Cmd-Init }
     'help'        { Cmd-Help }
@@ -6513,6 +7072,9 @@ switch ($Command.ToLower()) {
     'upgrade'     { Cmd-Update $Action $Value }
     'git'         { Cmd-Git $Action $Value }
     'clone'       { Cmd-Clone $Action $Value $Extra }
+    'clone-tree'  { Cmd-CloneTree }
+    'clonetree'   { Cmd-CloneTree }
+    'lineage'     { Cmd-CloneTree }
     'remove'      { Cmd-Remove $Action $Value $Extra }
     'rm'          { Cmd-Remove $Action $Value $Extra }
     'migrate'     { Cmd-Migrate $Action $Value }
@@ -6527,5 +7089,17 @@ switch ($Command.ToLower()) {
 
 # หลังรันคำสั่งสำเร็จ — ถ้า record อยู่ ให้เขียนลง script (ยกเว้น record/play เอง)
 if ($Command) { Write-RecordEntry $Command $Action $Value $Extra }
+}
+catch {
+    $raw = "$($_.Exception.Message)"
+    if (-not $raw) { $raw = "$_" }
+    $lines = @($raw -split "`r?`n")
+    Write-Err2 $lines[0]
+    for ($i = 1; $i -lt $lines.Count; $i++) {
+        $ln = "$($lines[$i])".TrimEnd()
+        if ($ln.Trim()) { Write-Info $ln.TrimStart() }
+    }
+    exit 1
+}
 
 

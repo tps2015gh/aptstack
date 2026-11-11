@@ -1,0 +1,19 @@
+﻿================================================================================
+ aptstack dist — รายงาน version ของชุด deploy นี้
+================================================================================
+  สร้างเมื่อ            : 2026-11-10 10:02:08
+  แพ็กเกจ aptstack      : 1.3.8
+  App version           : lands_auth-1          (จาก versions\lands_auth-1)
+  PHP                   : 8.3.36
+  Apache                : 2.4.69
+  MySQL/MariaDB         : 10.4.32
+  webMode               : apache
+  httpPort / dbPort     : 8077 / 3307
+  httpsEnabled          : true
+  appAlias (URL path)   : /app/
+  ขนาดชุด deploy        : 1009.2 MB
+  รวม binary (stack\)   : รวม
+================================================================================
+
+  ตรวจ version บน server ได้ตลอด:  aptstack list
+  สร้างรายงาน HTML พิมพ์ได้:        aptstack report

@@ -1,0 +1,29 @@
+﻿================================================================================
+ วิธี deploy ชุดนี้ (copy-paste ขึ้น server ที่ไม่มีเน็ตก็ได้)
+================================================================================
+
+ 1) copy ทั้งโฟลเดอร์นี้ไป server ด้วยวิธีใดก็ได้
+      - RDP: แนะนำใช้ drive redirection หรือ shared folder
+        (คัดลอก-วางตรง ๆ ผ่าน RDP ช้ามากกับไฟล์เล็ก ๆ หลายพันไฟล์)
+      - USB / share ใน LAN
+
+ 2) บน server เปิด cmd ที่โฟลเดอร์นี้
+      cd /d E:\path\to\lands_auth-1
+      aptstack use lands_auth-1
+      aptstack start
+      aptstack doctor
+
+ 3) เปิด http://127.0.0.1:8077/app/
+
+ หมายเหตุ
+  - ไม่ต้องติดตั้ง Windows Service ก็ใช้ได้ (dev ใช้ aptstack start/run ก็พอ)
+  - เมื่อพร้อมขึ้นจริง (ต้องการให้บูตเอง):
+        aptstack service install
+        aptstack service start
+  - ถ้าจะเปลี่ยน PHP/MySQL/Apache บน server (ตอนโดน audit สั่งเปลี่ยน):
+        คัดลอก zip ของตัวใหม่เข้าไป แล้ว
+        aptstack add php 8.3.36     (หรือ add php <path\to\zip>)
+        aptstack use php 8.3.36
+        aptstack doctor
+  - ย้อนกลับ: aptstack use php <ver เก่า>  (ของเก่ายังอยู่ครบ)
+================================================================================

@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.3.9 — 2026-11-11
+
+### Added
+
+- **`aptstack clone` UX** — เมนู interactive: เลือก app ต้นทาง + ประเภท clone (app/mysql) พร้อม preview ชื่อเวอร์ชันถัดไป (`Get-NextAppName`)
+- **`aptstack clone-tree` / lineage** — รายงานสายสัมพันธ์ clone/import ระหว่าง app versions (`Get-CloneLineage`, `Cmd-CloneTree`, `Cmd-ReportClone`)
+- **`tools\db_manager`** — helper Go สำหรับจัดการ database (source + README)
+- **`DEPLOY.txt` / `VERSIONS.txt`** — คู่มือ deploy offline + ตัวอย่างรายงาน version ของชุด deploy
+
+### Changed
+
+- **`Invoke-MysqlImportFile`** — บังคับ `USE` / `CREATE DATABASE` ให้ชี้ destination ตอน import dump ที่มีชื่อ DB ต้นทางต่างออกไป
+- **`www\app` origin discovery** — ค้นหาต้นทาง app ได้กว้างขึ้น (รวมตัวอย่างใน examples)
+
+### Security
+
+- กัน `*.sql.zip` + `tools\db_manager/*.exe` ไม่ให้หลุดขึ้น repo (runtime dump / binary)
 ## 1.3.8 — 2026-11-08
 
 ### Added
@@ -297,3 +314,4 @@ app-version switching and Windows Service install.
 
 - โค้ดแอปจริง / datadir จริง / SQL dump จริง / binary (PHP, MariaDB, Apache, phpMyAdmin)
   → `.gitignore` กันไว้ + `doctor` เช็คซ้ำไม่ให้หลุดขึ้น repo สาธารณะ
+

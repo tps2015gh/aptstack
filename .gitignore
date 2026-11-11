@@ -77,3 +77,12 @@ Desktop.ini
 
 # local scratch
 /tmp_exports.py
+
+# --- safety: dump archives + local tool binaries ---
+*.sql.zip
+tools/db_manager/db_manager.exe
+
+
+# security report (local)
+/aptstack-security-push-report-*.html
+
