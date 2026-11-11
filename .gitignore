@@ -96,3 +96,6 @@ tools/db_manager/db_manager.exe
 /tools/alert-jingle.wav
 /tools/alert-jingle-80.wav
 /tools/alert-*.wav
+
+/aptstack-push-complete-*.html
+
