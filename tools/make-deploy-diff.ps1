@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
 .SYNOPSIS
   สร้าง diff สำหรับ deploy (copy-paste แบบเลือกไฟล์) ระหว่างสองฝั่ง
@@ -21,15 +21,15 @@
 .EXAMPLE
   # เทียบ zip ต้นฉบับ  vs  โค้ดที่แก้แล้วใน versions\
   .\tools\make-deploy-diff.ps1 `
-    -Base    'C:\...\_setup_inet\lands_auth_20261025_023201.zip' `
-    -Compare '.\versions\lands_auth_20261025_023201' `
+    -Base    'C:\...\_setup_inet\my-app_20261025_023201.zip' `
+    -Compare '.\versions\my-app_20261025_023201' `
     -Out     '.\dist\deploy-diff-lands'
 
 .EXAMPLE
   # เทียบสองโฟลเดอร์ version
   .\tools\make-deploy-diff.ps1 `
     -Base    .\versions\apt052569 `
-    -Compare .\versions\lands_auth_20261025_023201 `
+    -Compare .\versions\my-app_20261025_023201 `
     -Out     .\dist\deploy-diff-lands-auth
 #>
 [CmdletBinding()]
@@ -72,8 +72,8 @@ function Show-Usage {
     Write-Host 'ตัวอย่าง:' -ForegroundColor Yellow
     Write-Host '  # เทียบ zip ต้นฉบับ vs โค้ดที่แก้ใน versions\'
     Write-Host "  .\tools\make-deploy-diff.ps1 ``"
-    Write-Host "    -Base    'C:\...\_setup_inet\lands_auth_20261025_023201.zip' ``"
-    Write-Host "    -Compare '.\versions\lands_auth_20261025_023201' ``"
+    Write-Host "    -Base    'C:\...\_setup_inet\my-app_20261025_023201.zip' ``"
+    Write-Host "    -Compare '.\versions\my-app_20261025_023201' ``"
     Write-Host "    -Out     '.\dist\deploy-diff-lands'"
     Write-Host ''
     Write-Host '  # เทียบสองโฟลเดอร์ version'

@@ -12,13 +12,13 @@
 | ชั้น | คือ | ที่อยู่ |
 |------|-----|--------|
 | **A. AptStack** | portable PHP/MariaDB/Apache + สลับเวอร์ชัน | root: `aptstack.ps1`, `templates\`, `stack\`, `versions\`, `config\` |
-| **B. Lands Authen app** | ระบบงานยืนยันตัว (CI3) | `versions\<app>\` active = `lands_auth_20261025_023201\` |
+| **B. Sample App app** | ระบบงานยืนยันตัว (CI3) | `versions\<app>\` active = `my-app_20261025_023201\` |
 
 แก้ “คำสั่ง/เวอร์ชัน stack” → ชั้น A · แก้ “สิทธิ์/หน้าจอ/flow งาน” → ชั้น B
 
 ---
 
-## 2. ชั้น B — โครงสร้างสำคัญ (Lands Authen)
+## 2. ชั้น B — โครงสร้างสำคัญ (Sample App)
 
 ```
 application/

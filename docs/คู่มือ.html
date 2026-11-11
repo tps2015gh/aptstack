@@ -198,9 +198,9 @@ aptstack service start|stop|status</code></pre>
 </tr>
 </table>
 <pre><code>aptstack dist              <span style="color:#6b7280">:: เมนู/active app → copy ทั้งก้อน</span>
-aptstack dist lands_auth nostack
+aptstack dist my-app nostack
 aptstack diff              <span style="color:#6b7280">:: เมนูเลือก app + output แล้วเทียบ</span>
-aptstack diff lands_auth dist\deploy-diff-lands
+aptstack diff my-app dist\deploy-diff-lands
 aptstack import-origin     <span style="color:#6b7280">:: ดูว่า app/binary import มาจากไหน</span>
 aptstack db-list           <span style="color:#6b7280">:: ชื่อ DB + user ทั้งหมด</span></code></pre>
 <div class="box">
@@ -291,7 +291,7 @@ aptstack import                                    <span style="color:#6b7280">:
 
 <h3>ขั้นตอนหลังได้ dump จากเครื่องเก่า</h3>
 <pre><code>aptstack start
-aptstack import E:\staging\lands_auth.sql lands_auth
+aptstack import E:\staging\my-app.sql my-app
 aptstack add app E:\staging\app-build.zip lands-1.0
 aptstack use lands-1.0
 aptstack restart</code></pre>
@@ -303,7 +303,7 @@ aptstack restart</code></pre>
 <pre><code>$cfg = json_decode(file_get_contents($root . '/config/stack.json'), true);
 $pdo = new PDO(
     sprintf('mysql:host=127.0.0.1;port=%d;dbname=%s;charset=utf8mb4',
-        (int)$cfg['dbPort'], 'lands_auth'),
+        (int)$cfg['dbPort'], 'my-app'),
     $cfg['dbUser'], $cfg['dbPass'],
     [PDO::ATTR_ERRMODE =&gt; PDO::ERRMODE_EXCEPTION]
 );</code></pre>

@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
 .SYNOPSIS
     aptstack - portable PHP / MariaDB / app-version manager for Windows
@@ -208,7 +208,7 @@ function Get-CurrentAppName {
 
 function Get-NextAppName([string]$fromName) {
     # สร้างชื่อเวอร์ชันถัดไปโดยคงชื่อหลักไว้ (เปลี่ยนเฉพาะเลข version)
-    #   1.0 -> 1.1 · todo-1.2.0 -> todo-1.2.1 · lands_auth -> lands_auth-1
+    #   1.0 -> 1.1 · todo-1.2.0 -> todo-1.2.1 · my-app -> my-app-1
     if ([string]::IsNullOrWhiteSpace($fromName)) { return 'app-1' }
     $next = $null
     if ($fromName -match '^\d+(?:\.\d+)*$') {
@@ -6079,7 +6079,7 @@ function Cmd-Diff($appVer, $outName, $extra) {
     }
     elseif ($oi.Kind -eq 'clone') {
         Write-Info "clone: ใช้ parent เป็น Base — เฉพาะไฟล์ที่แก้หลัง clone เท่านั้น"
-        Write-Info "ถ้าต้องการเทียบกับต้นตอ import เดิม ใช้: aptstack diff lands_auth"
+        Write-Info "ถ้าต้องการเทียบกับต้นตอ import เดิม ใช้: aptstack diff my-app"
     }
 
     $base = $oi.SourceAbs

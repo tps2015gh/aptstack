@@ -175,7 +175,7 @@ Invoke-WebRequest http://127.0.0.1:8077/app/ -UseBasicParsing
 
 ---
 
-## งานต่อเนื่อง: Lands Authen (CI3) — กลับมาแก้ต้องรู้
+## งานต่อเนื่อง: Sample App (CI3) — กลับมาแก้ต้องรู้
 
 > Map: **[architech.md](architech.md)** · สิทธิ์/flow ในหน้า `adm2/workflow_report`, `adm2/rights_guidance`
 
